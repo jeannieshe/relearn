@@ -1,2 +1,9 @@
 data/
 .DS_Store
+*.ckpt
+*.pkl
+*.torch
+*.csv
+*.pt
+*.h5ad
+*.txt
