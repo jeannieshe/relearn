@@ -7,3 +7,4 @@ data/
 *.pt
 *.h5ad
 *.txt
+*.safetensors
