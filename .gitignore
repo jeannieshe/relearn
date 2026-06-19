@@ -8,3 +8,4 @@ data/
 *.h5ad
 *.txt
 *.safetensors
+*.env
