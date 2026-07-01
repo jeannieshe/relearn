@@ -1,5 +1,5 @@
 """
-This environment is specifically designed to model a reinforcement learning environment where the virtual cell model STATE is the environment. The actions are limited to the 1138 small molecule, chemical perturbations in Tahoe-100M.
+This environment is specifically designed to model a reinforcement learning environment where the virtual cell model STATE is the environment. The actions are limited to the 1138 small molecule perturbations in Tahoe-100M.
 """
 
 import gymnasium as gym
@@ -9,6 +9,8 @@ import torch
 import pickle
 from state.tx.models.state_transition import StateTransitionPerturbationModel
 from pathlib import Path
+from relearn.utils import ucell_score, _load_gmt_signature
+from datasets import load_dataset
 
 class RelearnChemicalEnv(gym.Env):
     def __init__(self):
@@ -22,6 +24,7 @@ class RelearnChemicalEnv(gym.Env):
         self.num_cells = 1
         self.cell_representation_dim = 2000 # 2000 HVG
         self.termination_epsilon = 0.1
+        self.msigdb_gene_set = "HALLMARK_APOPTOSIS"
 
         # define action space
         self.pert_map = torch.load(Path(self.tahoe_dataset_dir / "fewshot/state_generalization_X_hvg/pert_onehot_map.pt"), weights_only=False)
@@ -40,12 +43,15 @@ class RelearnChemicalEnv(gym.Env):
         )
 
         # begin with a neutral cell state
-        # TODO: this should be biologically meaningful instead of just zeroes
+        tahoe_100m_ds = load_dataset("tahoebio/Tahoe-100M", streaming=True, split="train")
+
         self.initial_cell_state = np.array(np.zeros(shape=(2000,), dtype=np.float32))
         self._cell_state = self.initial_cell_state
 
         # define the apoptosis classifier
-        self.apoptosis_predictor = pass
+        self.sig_genes = _load_gmt_signature("h.all.v2025.1.Hs.symbols.gmt", self.msigdb_gene_set)
+        self.hvg_gene_names = pass
+        self.apoptosis_predictor = ucell_score
     
         # define the state applier
         # load the STATE model
@@ -61,7 +67,7 @@ class RelearnChemicalEnv(gym.Env):
 
     def _get_info(self):
         return {
-            "apoptosis score": self.apoptosis_predictor(self._cell_state),
+            "apoptosis score": self.apoptosis_predictor(self._cell_state, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes),
         }
 
     def _state_stepper_helper(self, cell_state: np.ndarray, action: int) -> np.ndarray:
@@ -109,7 +115,8 @@ class RelearnChemicalEnv(gym.Env):
         next_state = self._state_stepper_helper(self._cell_state, action)
 
         # score the state
-        new_score = self.apoptosis_predictor(next_state)
+        # single cell: expr is (2000,), gene_names is STATE's HVG panel order
+        new_score = self.apoptosis_predictor(next_state, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes)
 
         # update the state
         self._cell_state = next_state
