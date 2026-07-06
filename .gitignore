@@ -7,8 +7,10 @@ data/
 *.pt
 *.h5ad
 *.txt
+*.npy
 *.safetensors
 *.env
 wandb/*
 notebooks/jeannie/outputs/*
 runs/*
+**/__pycache__/*

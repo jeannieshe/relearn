@@ -7,16 +7,21 @@ import numpy as np
 from typing import Optional
 import torch
 import pickle
+import h5py
 from state.tx.models.state_transition import StateTransitionPerturbationModel
 from pathlib import Path
 from relearn.utils import ucell_score, _load_gmt_signature
-from datasets import load_dataset
 
 class RelearnChemicalEnv(gym.Env):
     def __init__(self):
         # globally used vars
         self.tahoe_dataset_dir = Path("../../notebooks/jeannie/ST-HVG-Tahoe/")
         self.dmso_control_pert = "[('DMSO_TF', 0.0, 'uM')]"
+
+        # cluster paths for the STATE-preprocessed Tahoe data (X_hvg + 2000-HVG panel
+        # this checkpoint was trained on), separate from the fewshot bundle above
+        self.tahoe_se_dir = Path("/large_storage/ctc/ML/transcriptomics_filtered/tahoe_se")
+        self.hvg_gene_names_path = Path("/large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy")
 
         # experiment vars
         self.cell_type_name = "SW480"
@@ -42,28 +47,65 @@ class RelearnChemicalEnv(gym.Env):
             dtype=np.float32
         )
 
-        # begin with a neutral cell state
-        tahoe_100m_ds = load_dataset("tahoebio/Tahoe-100M", streaming=True, split="train")
+        # STATE's 2000-HVG gene panel, in the exact column order of obsm/X_hvg
+        self.hvg_gene_names = np.load(self.hvg_gene_names_path, allow_pickle=True).astype(str)
 
-        self.initial_cell_state = np.array(np.zeros(shape=(2000,), dtype=np.float32))
+        # begin with a neutral cell state: mean STATE X_hvg profile across all
+        # SW480 cells treated with the DMSO_TF vehicle control
+        self.initial_cell_state = self._load_dmso_neutral_state()
         self._cell_state = self.initial_cell_state
 
         # define the apoptosis classifier
         self.sig_genes = _load_gmt_signature("h.all.v2025.1.Hs.symbols.gmt", self.msigdb_gene_set)
-        self.hvg_gene_names = pass
         self.apoptosis_predictor = ucell_score
     
         # define the state applier
         # load the STATE model
-        checkpoint = Path(self.tahoe_dataset_dir / "checkpoints/best.ckpt")
+        checkpoint = Path(self.tahoe_dataset_dir / "fewshot/state_generalization_X_hvg/checkpoints/best.ckpt")
         self._state_stepper = StateTransitionPerturbationModel.load_from_checkpoint(checkpoint)
         self._state_stepper.eval()
         self._device = next(self._state_stepper.parameters()).device
     
+    def _load_dmso_neutral_state(self) -> np.ndarray:
+        """
+        Neutral initial state for self.cell_type_name: the mean STATE X_hvg
+        profile (library-normalized + log1p, 2000-HVG) across every cell in
+        Tahoe-100M treated with the DMSO_TF vehicle control. A single control
+        cell is too sparse (dropout leaves only ~50/2000 genes nonzero) to be
+        a stable starting point, so we average over the full control population
+        for this cell line. Cached to disk after the first (multi-GB h5ad) read.
+        """
+        cache_path = self.tahoe_dataset_dir / f"{self.cell_type_name}_dmso_neutral_hvg.npy"
+        if cache_path.exists():
+            return np.load(cache_path).astype(np.float32)
+
+        h5ad_path = None
+        for candidate in sorted(self.tahoe_se_dir.glob("c*.h5ad")):
+            with h5py.File(candidate, "r") as f:
+                cell_line = f["obs"]["cell_line"]["categories"][0]
+                cell_line = cell_line.decode() if isinstance(cell_line, bytes) else cell_line
+                if cell_line == self.cell_type_accession_number:
+                    h5ad_path = candidate
+                    break
+        if h5ad_path is None:
+            raise FileNotFoundError(
+                f"No Tahoe-SE h5ad under {self.tahoe_se_dir} matches cell line {self.cell_type_accession_number}"
+            )
+
+        with h5py.File(h5ad_path, "r") as f:
+            pert_cats = [c.decode() if isinstance(c, bytes) else c for c in f["obs"]["drugname_drugconc"]["categories"][:]]
+            control_idx = pert_cats.index(self.dmso_control_pert)
+            pert_codes = f["obs"]["drugname_drugconc"]["codes"][:]
+            control_rows = np.where(pert_codes == control_idx)[0]
+            neutral_state = f["obsm"]["X_hvg"][control_rows, :].mean(axis=0)
+
+        neutral_state = neutral_state.astype(np.float32)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache_path, neutral_state)
+        return neutral_state
+
     def _get_obs(self):
-        return {
-            "cell_state": self._cell_state,
-        }
+        return self._cell_state
 
     def _get_info(self):
         return {
