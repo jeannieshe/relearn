@@ -137,4 +137,75 @@ steps_done = 0
 
 def select_action(state):
     """Here you can implement any action selection algorithm of your choice. For us, we're sticking with epsilon greedy for now."""
-    pass
+    global steps_done
+
+    # determine if we should be exploiting or exploring here
+    sample = random.random()
+    eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * steps_done / EPS_DECAY)
+
+    steps_done += 1
+
+    if sample > eps_threshold:
+        with torch.no_grad():
+            # t.max(1) will return the largest column value of each row
+            # second column on max result is index of where max element was found
+            # pick the action with the larger expected reward
+            # return policy_net(state).max(1).indices.view(1, 1)
+
+            # apply the policy network on the state
+            pred = policy_net(state)
+            # grab the largest column values of each row (each of the biggest) ??? # TODO what do the rows and columns mean for the state?
+            max_elem = pred.max(1)
+            # grab the indices and reshape
+            return max_elem.indices.view(1, 1)
+        
+    else:
+        return torch.tensor([
+            [env.action_space.sample()]], device=device, dtype=torch.long
+        )
+
+episode_durations = []
+
+def plot_durations(show_result=False):
+    plt.figure(1)
+    durations_t = torch.tensor(episode_durations, dtype=torch.float)
+    if show_result:
+        plt.title('Result')
+    else:
+        plt.clf()
+        plt.title('Training...')
+    plt.xlabel('Episode')
+    plt.ylabel('Duration')
+    plt.plot(durations_t.numpy())
+    # Take 100 episode averages and plot them too
+    if len(durations_t) >= 100:
+        means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
+        means = torch.cat((torch.zeros(99), means))
+        plt.plot(means.numpy())
+
+    plt.pause(0.001)  # pause a bit so that plots are updated
+    # if is_ipython:
+    #     if not show_result:
+    #         display.display(plt.gcf())
+    #         display.clear_output(wait=True)
+    #     else:
+    #         display.display(plt.gcf())
+
+# training loop
+
+# define an optimize_model func that performs a single step of the optimization. it samples a batch, concatenates all the tensors into a single one, computes Q(s, a) and V(s_(t+1)) = max_a Q(s_(t+1), a) and combines them into the loss.
+# by definition, if s is a terminal state, we set V(s) == 0.
+# we use a target network to compute V(s_(t+1)) for added stability
+
+# the target network is updated at every step with a soft update controlled by TAU.
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return # only optimize the model (update the target parameters) if you know that there has been enough experience "collected"; i.e. until the replay buffer has enough samples to form a full batch
+    
+    # pull a random minibatch of Transition tuples. this is the point of a replay buffer, to decorrelate sequential experiences 
+    transitions = memory.sample(BATCH_SIZE)
+
+    batch = Transition(*zip(*transitions))
+
+    # compute a mask of non-final states. concatenate with the batch elements
+    
