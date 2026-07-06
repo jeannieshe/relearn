@@ -16,6 +16,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
+import wandb
+
 env = gym.make("CartPole-v1") # use the basic cartpole env to mock the dqn
 
 # setup device, since no gpu at this moment let's use cpu
@@ -115,6 +117,21 @@ EPS_END = 0.01 # the end value of epsilon
 EPS_DECAY = 2500 # controls the rate of exponential decay of epsilon. higher means a slower decay
 TAU = 0.005 # the update rate of the target network; how often is the target network updated?
 LR = 3e-4 # the learning rate of the AdamW optimizer
+
+wandb.init(
+    project="relearn-dqn",
+    config={
+        "batch_size": BATCH_SIZE,
+        "gamma": GAMMA,
+        "eps_start": EPS_START,
+        "eps_end": EPS_END,
+        "eps_decay": EPS_DECAY,
+        "tau": TAU,
+        "lr": LR,
+        "seed": seed,
+        "device": str(device),
+    },
+)
 
 # get number of actions from gym action space
 n_actions = env.action_space.n
@@ -234,8 +251,10 @@ def optimize_model():
     loss.backward()
 
     # in-place gradient clipping
-    torch.nn.utils.clip_grad_value(policy_net.parameters(), 100)
+    torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     optimizer.step()
+
+    return loss.item()
 
 # training loop
 if torch.cuda.is_available() or torch.backends.mps.is_available():
@@ -247,9 +266,11 @@ for i_episode in range(num_episodes):
     # initialize env, get the state
     state, info = env.reset()
     state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+    episode_reward = 0.0
     for t in count():
         action = select_action(state)
-        observation, reward, terminated, truncated = env.step(action.item())
+        observation, reward, terminated, truncated, _ = env.step(action.item())
+        episode_reward += reward
         reward = torch.tensor([reward], device=device)
         done = terminated or truncated
 
@@ -265,7 +286,7 @@ for i_episode in range(num_episodes):
         state = next_state
 
         # perform one step of the optimization (on the policy network)
-        optimize_model()
+        loss = optimize_model()
 
         # soft update of the target network's weights
         # theta prime = tau * theta + (1 - tau) * theta prime
@@ -275,12 +296,24 @@ for i_episode in range(num_episodes):
             target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
         target_net.load_state_dict(target_net_state_dict)
 
+        eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * steps_done / EPS_DECAY)
+        wandb.log({
+            "loss": loss,
+            "epsilon": eps_threshold,
+        }, step=steps_done)
+
         if done:
             episode_durations.append(t+1)
             plot_durations()
+            wandb.log({
+                "episode": i_episode,
+                "episode_duration": t + 1,
+                "episode_reward": episode_reward,
+            }, step=steps_done)
             break
 
 print('Complete')
 plot_durations(show_result=True)
+wandb.finish()
 plt.ioff()
 plt.show()
