@@ -15,7 +15,7 @@ from relearn.utils import ucell_score, _load_gmt_signature
 class RelearnChemicalEnv(gym.Env):
     def __init__(self):
         # globally used vars
-        self.tahoe_dataset_dir = Path("../../notebooks/jeannie/ST-HVG-Tahoe/")
+        self.tahoe_dataset_dir = Path("/home/jeannie/relearn/notebooks/jeannie/ST-HVG-Tahoe")
         self.dmso_control_pert = "[('DMSO_TF', 0.0, 'uM')]"
 
         # cluster paths for the STATE-preprocessed Tahoe data (X_hvg + 2000-HVG panel
@@ -56,7 +56,7 @@ class RelearnChemicalEnv(gym.Env):
         self._cell_state = self.initial_cell_state
 
         # define the apoptosis classifier
-        self.sig_genes = _load_gmt_signature("h.all.v2025.1.Hs.symbols.gmt", self.msigdb_gene_set)
+        self.sig_genes = _load_gmt_signature("/home/jeannie/relearn/data/HALLMARK_APOPTOSIS.v2026.1.Hs.gmt", self.msigdb_gene_set)
         self.apoptosis_predictor = ucell_score
     
         # define the state applier
