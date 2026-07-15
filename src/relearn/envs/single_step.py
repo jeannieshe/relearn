@@ -10,29 +10,37 @@ import pickle
 import h5py
 from state.tx.models.state_transition import StateTransitionPerturbationModel
 from pathlib import Path
+from relearn.config import EnvConfig
 from relearn.utils import ucell_score, _load_gmt_signature
 
 class RelearnChemicalEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, cfg: Optional[EnvConfig] = None):
+        cfg = cfg if cfg is not None else EnvConfig()
+        self.cfg = cfg
+
         # globally used vars
-        self.tahoe_dataset_dir = Path("notebooks/jeannie/ST-HVG-Tahoe")
-        self.dmso_control_pert = "[('DMSO_TF', 0.0, 'uM')]"
+        self.tahoe_dataset_dir = Path(cfg.tahoe_dataset_dir)
+        self.dmso_control_pert = cfg.dmso_control_pert
 
         # cluster paths for the STATE-preprocessed Tahoe data (X_hvg + 2000-HVG panel
         # this checkpoint was trained on), separate from the fewshot bundle above
-        self.tahoe_se_dir = Path("/large_storage/ctc/ML/transcriptomics_filtered/tahoe_se")
-        self.hvg_gene_names_path = Path("/large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy")
+        self.tahoe_se_dir = Path(cfg.tahoe_se_dir)
+        self.hvg_gene_names_path = Path(cfg.hvg_gene_names_path)
 
         # experiment vars
-        self.cell_type_name = "SW480"
-        self.cell_type_accession_number = "CVCL_0546"
-        self.num_cells = 1
-        self.cell_representation_dim = 2000 # 2000 HVG
-        self.termination_epsilon = 0.1
-        self.msigdb_gene_set = "HALLMARK_APOPTOSIS"
+        self.cell_type_name = cfg.cell_type_name
+        self.cell_type_accession_number = cfg.cell_type_accession_number
+        self.num_cells = cfg.num_cells
+        self.cell_representation_dim = cfg.cell_representation_dim
+        self.termination_epsilon = cfg.termination_epsilon
+        self.msigdb_gene_set = cfg.msigdb_gene_set
+
+        # which STATE fewshot run/checkpoint predicts next states -- this is the
+        # "state transition function" axis: pert map and model both come from it
+        state_run_dir = self.tahoe_dataset_dir / cfg.state_run_dir
 
         # define action space
-        self.pert_map = torch.load(Path(self.tahoe_dataset_dir / "fewshot/state_generalization_X_hvg/pert_onehot_map.pt"), weights_only=False)
+        self.pert_map = torch.load(Path(state_run_dir / "pert_onehot_map.pt"), weights_only=False)
         self.drug_list = list(self.pert_map.keys()) # actions are (name, concentration, units)
         self.pert_matrix = torch.stack(list(self.pert_map.values())) # shape: (1138, 1138)
         self.action_space = gym.spaces.Discrete(len(self.drug_list))
@@ -41,7 +49,7 @@ class RelearnChemicalEnv(gym.Env):
         # pass in the cell state
         # here, starting with 2000 HVG raw representation
         self.observation_space = gym.spaces.Box(
-            low=0, 
+            low=0,
             high=np.inf,
             shape=(self.cell_representation_dim,),
             dtype=np.float32
@@ -56,12 +64,12 @@ class RelearnChemicalEnv(gym.Env):
         self._cell_state = self.initial_cell_state
 
         # define the apoptosis classifier
-        self.sig_genes = _load_gmt_signature("data/HALLMARK_APOPTOSIS.v2026.1.Hs.gmt", self.msigdb_gene_set)
+        self.sig_genes = _load_gmt_signature(cfg.gmt_path, self.msigdb_gene_set)
         self.apoptosis_predictor = ucell_score
-    
+
         # define the state applier
         # load the STATE model
-        checkpoint = Path(self.tahoe_dataset_dir / "fewshot/state_generalization_X_hvg/checkpoints/best.ckpt")
+        checkpoint = Path(state_run_dir / cfg.checkpoint_name)
         self._state_stepper = StateTransitionPerturbationModel.load_from_checkpoint(checkpoint)
         self._state_stepper.eval()
         self._device = next(self._state_stepper.parameters()).device

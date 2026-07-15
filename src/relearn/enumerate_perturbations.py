@@ -13,7 +13,7 @@ you when you can just ask every arm directly.
 import csv
 from pathlib import Path
 
-from relearn.env import RelearnChemicalEnv
+from relearn.envs.single_step import RelearnChemicalEnv
 
 
 def rank_all_perturbations(env: RelearnChemicalEnv):

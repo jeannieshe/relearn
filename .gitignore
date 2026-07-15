@@ -12,5 +12,6 @@ data/
 *.env
 wandb/*
 notebooks/jeannie/outputs/*
+outputs/*
 runs/*
 **/__pycache__/*

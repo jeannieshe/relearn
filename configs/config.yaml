@@ -1,0 +1,8 @@
+# Top-level composition: pick one file from each group below, then any
+# _self_ overrides. Override from the CLI, e.g.:
+#   python src/relearn/agents/dqn.py agent=eps_fix env=sw480 agent.lr=0.001
+defaults:
+  - base_config
+  - agent: baseline
+  - env: sw480
+  - _self_

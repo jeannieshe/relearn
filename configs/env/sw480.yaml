@@ -1,0 +1,23 @@
+# Default environment: SW480, 2000-HVG STATE representation, the
+# state_generalization_X_hvg fewshot checkpoint, HALLMARK_APOPTOSIS reward.
+# Matches EnvConfig's defaults (src/relearn/config.py) -- spelled out here as
+# a reference for every field available to override, e.g. a new cell line
+# config would only need to override cell_type_name/cell_type_accession_number.
+cell_type_name: SW480
+cell_type_accession_number: CVCL_0546
+
+cell_representation_dim: 2000
+hvg_gene_names_path: /large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy
+
+tahoe_dataset_dir: notebooks/jeannie/ST-HVG-Tahoe
+state_run_dir: fewshot/state_generalization_X_hvg
+checkpoint_name: checkpoints/best.ckpt
+
+msigdb_gene_set: HALLMARK_APOPTOSIS
+gmt_path: data/HALLMARK_APOPTOSIS.v2026.1.Hs.gmt
+
+termination_epsilon: 0.1
+
+tahoe_se_dir: /large_storage/ctc/ML/transcriptomics_filtered/tahoe_se
+dmso_control_pert: "[('DMSO_TF', 0.0, 'uM')]"
+num_cells: 1
