@@ -116,6 +116,9 @@ EPS_END = 0.01 # the end value of epsilon
 EPS_DECAY = 2500 # controls the rate of exponential decay of epsilon. higher means a slower decay
 TAU = 0.005 # the update rate of the target network; how often is the target network updated?
 LR = 3e-4 # the learning rate of the AdamW optimizer
+EMB_TYPE = "HVG" # input/output embedding: HVG or SE, etc.
+CELL_LINE = env.cell_type_name # the standard name, not cellosaurus name; ex. SW480
+
 
 wandb.init(
     project="relearn-dqn",
@@ -127,6 +130,8 @@ wandb.init(
         "eps_decay": EPS_DECAY,
         "tau": TAU,
         "lr": LR,
+        "emb_type": EMB_TYPE,
+        "cell_line": CELL_LINE,
         "seed": seed,
         "device": str(device),
     },
