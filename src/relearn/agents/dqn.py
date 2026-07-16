@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-from relearn.envs.single_step import RelearnChemicalEnv
+from relearn.envs.small_molecules import RelearnChemicalEnv
 
 import wandb
 
@@ -268,7 +268,8 @@ def main(cfg: DictConfig):
         state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
         episode_reward = 0.0
         for t in count():
-            if t == 0 or agent_cfg.forced_second_action is None:
+            forced = agent_cfg.forced_first_action if t == 0 else agent_cfg.forced_second_action
+            if forced is None:
                 action = select_action(state)
             else:
                 action = torch.tensor([[dmso_action]], device=device, dtype=torch.long)

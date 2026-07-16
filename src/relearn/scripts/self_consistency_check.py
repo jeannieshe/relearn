@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from relearn.config import EnvConfig
-from relearn.envs.single_step import RelearnChemicalEnv
+from relearn.envs.small_molecules import RelearnChemicalEnv
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 BASELINE_PATH = REPO_ROOT / "experiments" / "perturbation_ranking.csv"

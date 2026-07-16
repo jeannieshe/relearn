@@ -1,0 +1,5 @@
+# Reverse of self_consistency.yaml: forces DMSO as the first "drug" applied,
+# then leaves the second step unconstrained (agent chooses freely). Tests
+# whether pre-treating with the vehicle control changes which drug looks
+# best, compared to choosing directly from the raw neutral baseline.
+forced_first_action: dmso

@@ -30,21 +30,12 @@ multi-step/combination dosing (feeding a drug's resulting state back in as
 `ctrl_cell_emb` for a second drug) breaks past 0.66 before investing further.
 See memory `reward-landscape-flat-single-drug` for full detail.
 
-## 2026-07-15 — eps-decay/step-budget mismatch in kny202d4
+## 2026-07-16 — num_episodes in A001 is too low to explore all action space
 
-Run: `agent=eps_fix env=sw480` (fix, not yet run) | wandb: `kny202d4` (the run being diagnosed, predates the config system)
+Run: `python src/relearn/agents/dqn.py experiment=A run_id=A019 description='"one_drug, horizon=1, HVG, ST, episodes=2500"'` | wandb: `fpvl6wny`
 
-Hypothesis: kny202d4 (300 episodes) showed flat episode_reward from episode 0
-(mean 0.616) to episode 299 (mean 0.617) — investigate whether the DQN ever
-got a chance to learn anything, independent of the reward-ceiling issue above.
+Hypothesis: kny202d4 (300 episodes) does not explore all the action space even in the multi-armed bandit setting, since there are a total of 1138 chemical perturbations in the environment 'small_molecules.py.' Now I've updated the 'baseline.yaml' config in agent/ to be specifically num_episodes=2500 and eps_decay=150 so there is a chance for full exploration and a little exploitation.
 
-Result: `EPS_DECAY=2500` assumes thousands of steps, but the env truncates
-every episode after 1 step, so `num_episodes` IS the total step count.
-Epsilon only decayed to ~0.80 by the final step — the agent was ~80%
-random-acting for the entire run and never got to meaningfully exploit a
-learned policy.
+Result: The model explored a lot until around episode 500, then did not really learn to optimize the reward even though it had around 2000 more steps to do that. Maybe I should not have that steep of epsilon decay.
 
-Next: re-run with `agent=eps_fix` (`eps_decay: 150`, `num_episodes: 2000`)
-once the environment supports a horizon worth exploiting (see the sweep
-entry above) — no point re-running this fix against a 1-step env whose
-ceiling is already known.
+Next: Want to fix epsilon decay to be around 500.
