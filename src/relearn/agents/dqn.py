@@ -148,6 +148,8 @@ def main(cfg: DictConfig):
     resolved_config = dict(OmegaConf.to_container(cfg, resolve=True))
     wandb.init(
         project="relearn-dqn",
+        group=cfg.experiment,
+        name=cfg.run_id,
         config={**resolved_config, "device": str(device)},
     )
     # Hydra already wrote the fully-resolved config and exact CLI overrides for

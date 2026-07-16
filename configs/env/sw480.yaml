@@ -10,6 +10,7 @@ cell_representation_dim: 2000
 hvg_gene_names_path: /large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy
 
 tahoe_dataset_dir: notebooks/jeannie/ST-HVG-Tahoe
+# tahoe_dataset_dir: notebooks/alaysia/state_infer/ST-HVG-Tahoe
 state_run_dir: fewshot/state_generalization_X_hvg
 checkpoint_name: checkpoints/best.ckpt
 
