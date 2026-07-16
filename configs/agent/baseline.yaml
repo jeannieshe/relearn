@@ -5,9 +5,9 @@ batch_size: 128
 gamma: 0.99
 eps_start: 0.9
 eps_end: 0.01
-eps_decay: 2500
+eps_decay: 150
 tau: 0.005
 lr: 3.0e-4
 seed: 42
-num_episodes: 300
+num_episodes: 2500
 replay_capacity: 10000

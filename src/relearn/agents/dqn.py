@@ -177,6 +177,8 @@ def main(cfg: DictConfig):
 
     steps_done = 0
 
+    dmso_action = env.drug_list.index(env.cfg.dmso_control_pert)
+
     def select_action(state):
         """Here you can implement any action selection algorithm of your choice. For us, we're sticking with epsilon greedy for now."""
         nonlocal steps_done
@@ -265,7 +267,10 @@ def main(cfg: DictConfig):
         state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
         episode_reward = 0.0
         for t in count():
-            action = select_action(state)
+            if t == 0 or agent_cfg.forced_second_action is None:
+                action = select_action(state)
+            else:
+                action = torch.tensor([[dmso_action]], device=device, dtype=torch.long)
             observation, reward, terminated, truncated, _ = env.step(action.item())
             episode_reward += reward
             reward = torch.tensor([reward], device=device, dtype=torch.float32)

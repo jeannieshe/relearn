@@ -1,0 +1,2 @@
+# Verifies if STATE maintains self-consistency, i.e. does f(drug A) = f(drug A) + f(DMSO) when the drugs are applied sequentially as drug A then DMSO? Forces a horizon of 2, forces DMSO as the second "drug" applied
+forced_second_action: dmso

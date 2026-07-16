@@ -1,8 +1,0 @@
-# Fixes the eps-decay/step-budget mismatch found in wandb run kny202d4 (2026-07-14):
-# the env truncates every episode after 1 step, so num_episodes IS the total step
-# count. eps_decay=2500 over only 300 steps barely decays epsilon (ends at ~0.80
-# instead of near eps_end), so the agent spent that whole run ~80% random-acting
-# and never got to exploit a learned policy. Lower eps_decay and raise
-# num_episodes so exploitation actually kicks in within the run.
-eps_decay: 150
-num_episodes: 2000

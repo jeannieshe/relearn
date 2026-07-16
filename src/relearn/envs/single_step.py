@@ -21,6 +21,7 @@ class RelearnChemicalEnv(gym.Env):
         # globally used vars
         self.tahoe_dataset_dir = Path(cfg.tahoe_dataset_dir)
         self.dmso_control_pert = cfg.dmso_control_pert
+        self.step_counter = 0
 
         # cluster paths for the STATE-preprocessed Tahoe data (X_hvg + 2000-HVG panel
         # this checkpoint was trained on), separate from the fewshot bundle above
@@ -63,6 +64,7 @@ class RelearnChemicalEnv(gym.Env):
         # SW480 cells treated with the DMSO_TF vehicle control
         self.initial_cell_state = self._load_dmso_neutral_state()
         self._cell_state = self.initial_cell_state
+        self._step_count = 0
 
         # define the apoptosis classifier
         self.sig_genes = _load_gmt_signature(cfg.gmt_path, self.msigdb_gene_set)

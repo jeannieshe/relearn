@@ -27,6 +27,7 @@ class DQNConfig:
     seed: int = 42
     num_episodes: int = 300     # if the env employs a 1-step horizon, this is also the total step count
     replay_capacity: int = 10000
+    forced_second_action: str | None = None
 
 
 @dataclass
@@ -60,6 +61,9 @@ class EnvConfig:
     tahoe_se_dir: str = "/large_storage/ctc/ML/transcriptomics_filtered/tahoe_se"
     dmso_control_pert: str = "[('DMSO_TF', 0.0, 'uM')]"
     num_cells: int = 1
+
+    # horizon criterion
+    horizon: int = 1
 
 
 @dataclass
