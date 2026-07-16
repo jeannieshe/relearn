@@ -1,9 +1,9 @@
 """
-Static PDF rendering of the self-consistency sweep (experiments/self_consistency_ranking.csv):
-does f(output_A, DMSO) ~ output_A? See self_consistency_check.py for how that CSV is produced.
+Static PDF rendering of the self-consistency sweep (experiments/dmso_second_ranking.csv):
+does f(drug, DMSO) ~ f(drug) alone? See dmso_second_sweep.py for how that CSV is produced.
 
-Page 1: scatter of single-drug effect (x) vs. cosine similarity between drug-A-alone
-and drug-A+DMSO states (y), colored by L2 distance between those same two states.
+Page 1: scatter of single-drug effect (x) vs. cosine similarity between drug-alone
+and drug+DMSO states (y), colored by L2 distance between those same two states.
 Page 2: the worst/best self-consistency tables.
 """
 
@@ -16,9 +16,9 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import LinearSegmentedColormap
 
-REPO_ROOT = Path(__file__).parent.parent.parent
-IN_PATH = REPO_ROOT / "experiments" / "self_consistency_ranking.csv"
-OUT_PATH = REPO_ROOT / "experiments" / "self_consistency_ranking.pdf"
+REPO_ROOT = Path(__file__).parent.parent.parent.parent
+IN_PATH = REPO_ROOT / "experiments" / "dmso_second_ranking.csv"
+OUT_PATH = REPO_ROOT / "experiments" / "dmso_second_ranking.pdf"
 
 UNRELATED_FLOOR = 0.83  # cosine sim between two unrelated single-drug outcomes
 NEUTRAL_SCORE = 0.5584786324786325  # UCell score of the untreated SW480 baseline
@@ -38,7 +38,7 @@ def load_rows(path: Path) -> list:
     with open(path) as f:
         rows = list(csv.DictReader(f))
     for r in rows:
-        r["score_A"] = float(r["score_A"])
+        r["score_drug_alone"] = float(r["score_drug_alone"])
         r["cosine_sim"] = float(r["cosine_sim"])
         r["l2_dist"] = float(r["l2_dist"])
     return rows
@@ -46,16 +46,16 @@ def load_rows(path: Path) -> list:
 
 def plot_scatter(ax, rows):
     cmap = LinearSegmentedColormap.from_list("seq_blue", [SEQ_LOW, SEQ_HIGH])
-    xs = [r["score_A"] for r in rows]
+    xs = [r["score_drug_alone"] for r in rows]
     ys = [r["cosine_sim"] for r in rows]
     l2s = [r["l2_dist"] for r in rows]
 
     sc = ax.scatter(xs, ys, c=l2s, cmap=cmap, s=26, linewidths=0.6, edgecolors="white", zorder=3)
 
     dmso = next(r for r in rows if r["drug"] == "[('DMSO_TF', 0.0, 'uM')]")
-    ax.scatter([dmso["score_A"]], [dmso["cosine_sim"]], s=90, facecolors="none",
+    ax.scatter([dmso["score_drug_alone"]], [dmso["cosine_sim"]], s=90, facecolors="none",
                edgecolors=DMSO_RING, linewidths=1.6, zorder=4)
-    ax.annotate("DMSO → DMSO", (dmso["score_A"], dmso["cosine_sim"]),
+    ax.annotate("DMSO → DMSO", (dmso["score_drug_alone"], dmso["cosine_sim"]),
                 xytext=(8, 6), textcoords="offset points", fontsize=9,
                 color=DMSO_RING, fontweight="bold")
 
@@ -77,7 +77,7 @@ def plot_scatter(ax, rows):
     # so they're pinned to a 4-row shelf below the data with straight leader
     # lines. Row assignment alternates by x-order (idx % 4) so neighbors in x
     # never land in the same row.
-    worst = sorted(sorted(rows, key=lambda r: r["cosine_sim"])[:12], key=lambda r: r["score_A"])
+    worst = sorted(sorted(rows, key=lambda r: r["cosine_sim"])[:12], key=lambda r: r["score_drug_alone"])
     y_bottom = min(ys)  # lowest real data point (~0.137) -- shelf lives below this, above 0
     n_rows = 4
     row_ys = [y_bottom * (0.82 - 0.68 * i / (n_rows - 1)) for i in range(n_rows)]
@@ -88,14 +88,14 @@ def plot_scatter(ax, rows):
         name = re.sub(r"\s*\([^)]*\)\s*$", "", name)  # drop salt/formulation suffix, e.g. "(hydrochloride)"
         label = f"{name} ({conc:g}µM)" if name == "Homoharringtonine" else name
         row_y = row_ys[i % n_rows]
-        ax.plot([r["score_A"], r["score_A"]], [r["cosine_sim"] - 0.012, row_y + 0.012],
+        ax.plot([r["score_drug_alone"], r["score_drug_alone"]], [r["cosine_sim"] - 0.012, row_y + 0.012],
                 color=MUTED, linewidth=0.7, zorder=4)
-        ax.text(r["score_A"], row_y, label, ha="center", va="center", fontsize=7.2,
+        ax.text(r["score_drug_alone"], row_y, label, ha="center", va="center", fontsize=7.2,
                 color=SECONDARY, zorder=5,
                 bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=1.5))
 
-    ax.set_xlabel("Single-drug effect  —  UCell apoptosis score of drug A alone", fontsize=10, color=MUTED)
-    ax.set_ylabel("Cosine similarity  —  drug A alone  vs.  drug A + DMSO", fontsize=10, color=MUTED)
+    ax.set_xlabel("Single-drug effect  —  UCell apoptosis score of drug alone", fontsize=10, color=MUTED)
+    ax.set_ylabel("Cosine similarity  —  drug alone  vs.  drug + DMSO", fontsize=10, color=MUTED)
     ax.set_title("Self-consistency vs. drug potency", fontsize=13, fontweight="600", color=PRIMARY, loc="left")
 
     for spine in ("top", "right"):
@@ -117,7 +117,7 @@ def plot_tables(fig, rows):
     worst, best = sorted_rows[:12], sorted_rows[-12:][::-1]
 
     def as_table_data(subset):
-        return [[r["drug"].strip("[]").replace("'", ""), f"{r['score_A']:.4f}",
+        return [[r["drug"].strip("[]").replace("'", ""), f"{r['score_drug_alone']:.4f}",
                  f"{r['cosine_sim']:.4f}", f"{r['l2_dist']:.4f}"] for r in subset]
 
     for ax, title, subset in (
@@ -128,7 +128,7 @@ def plot_tables(fig, rows):
         ax.set_title(title, fontsize=11, fontweight="600", color=PRIMARY, loc="left", pad=14)
         table = ax.table(
             cellText=as_table_data(subset),
-            colLabels=["Drug", "Score A", "Cosine", "L2"],
+            colLabels=["Drug", "Score alone", "Cosine", "L2"],
             bbox=[0, 0.35, 1, 0.62], cellLoc="left", colLoc="left",
         )
         table.auto_set_font_size(False)

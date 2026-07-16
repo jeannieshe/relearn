@@ -35,7 +35,7 @@ if __name__ == "__main__":
     env = RelearnChemicalEnv()
     results = rank_all_perturbations(env)
 
-    out_path = Path(__file__).parent.parent.parent / "experiments" / "perturbation_ranking.csv"
+    out_path = Path(__file__).parent.parent.parent.parent / "experiments" / "perturbation_ranking.csv"
     with open(out_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["action", "drug", "reward", "terminated"])
         writer.writeheader()

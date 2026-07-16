@@ -24,7 +24,7 @@ import numpy as np
 from relearn.config import EnvConfig
 from relearn.envs.small_molecules import RelearnChemicalEnv
 
-REPO_ROOT = Path(__file__).parent.parent.parent
+REPO_ROOT = Path(__file__).parent.parent.parent.parent
 BASELINE_PATH = REPO_ROOT / "experiments" / "perturbation_ranking.csv"
 OUT_PATH = REPO_ROOT / "experiments" / "dmso_first_ranking.csv"
 
@@ -49,6 +49,14 @@ def run_dmso_first_sweep(env: RelearnChemicalEnv, baseline_scores: dict) -> list
         next_state = env._state_stepper_helper(post_dmso_state, action)
         score = env.apoptosis_predictor(next_state, gene_names=env.hvg_gene_names, signature_genes=env.sig_genes)
 
+        # mirrors dmso_second_sweep.py's self-consistency framing, reversed:
+        # does the second dose (drug X here, vs. DMSO there) leave the state
+        # close to where the *first* dose alone left it (DMSO alone here)?
+        cosine_sim = float(
+            np.dot(post_dmso_state, next_state) / (np.linalg.norm(post_dmso_state) * np.linalg.norm(next_state))
+        )
+        l2_dist = float(np.linalg.norm(post_dmso_state - next_state))
+
         drug = env.drug_list[action]
         baseline = baseline_scores.get(str(drug))
         results.append({
@@ -57,6 +65,8 @@ def run_dmso_first_sweep(env: RelearnChemicalEnv, baseline_scores: dict) -> list
             "score_dmso_then_drug": float(score),
             "score_drug_alone": baseline,
             "score_delta": None if baseline is None else float(score) - baseline,
+            "cosine_sim": cosine_sim,
+            "l2_dist": l2_dist,
         })
     results.sort(key=lambda r: r["score_dmso_then_drug"], reverse=True)
     return results, post_dmso_score
@@ -68,7 +78,10 @@ if __name__ == "__main__":
     env = RelearnChemicalEnv(EnvConfig(horizon=2))
     results, post_dmso_score = run_dmso_first_sweep(env, baseline_scores)
 
-    fieldnames = ["action", "drug", "score_dmso_then_drug", "score_drug_alone", "score_delta"]
+    fieldnames = [
+        "action", "drug", "score_dmso_then_drug", "score_drug_alone", "score_delta",
+        "cosine_sim", "l2_dist",
+    ]
     with open(OUT_PATH, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -80,9 +93,14 @@ if __name__ == "__main__":
     top10_dmso_first_drugs = {r["drug"] for r in results[:10]}
     overlap = len(top10_baseline_drugs & top10_dmso_first_drugs)
 
+    cosine_sims = [r["cosine_sim"] for r in results]
+    l2_dists = [r["l2_dist"] for r in results]
+
     print(f"Wrote {len(results)} results to {OUT_PATH}")
     print(f"score after DMSO alone (step 1): {post_dmso_score:.4f}")
     print(f"score_dmso_then_drug: mean={np.mean(scores):.4f} min={np.min(scores):.4f} max={np.max(scores):.4f}")
+    print(f"cosine_sim (vs. DMSO alone): mean={np.mean(cosine_sims):.4f} min={np.min(cosine_sims):.4f} max={np.max(cosine_sims):.4f}")
+    print(f"l2_dist:    mean={np.mean(l2_dists):.4f}")
     print(f"top-10 overlap with no-pretreatment ranking: {overlap}/10 drugs in common")
 
     print("\nTop 10 (DMSO pretreatment, then best second drug):")
