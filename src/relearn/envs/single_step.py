@@ -21,6 +21,7 @@ class RelearnChemicalEnv(gym.Env):
         # globally used vars
         self.tahoe_dataset_dir = Path(cfg.tahoe_dataset_dir)
         self.dmso_control_pert = cfg.dmso_control_pert
+        self.step_counter = 0
 
         # cluster paths for the STATE-preprocessed Tahoe data (X_hvg + 2000-HVG panel
         # this checkpoint was trained on), separate from the fewshot bundle above
@@ -154,6 +155,9 @@ class RelearnChemicalEnv(gym.Env):
         # reset the cell state
         self._cell_state = self.initial_cell_state
 
+        # reset the step counter
+        self.step_counter = 0
+
         observation = self._get_obs()
         info = self._get_info()
 
@@ -173,7 +177,9 @@ class RelearnChemicalEnv(gym.Env):
 
         # check termination, truncation criteria
         terminated = abs(1 - new_score) <= self.termination_epsilon
-        truncated = True # TODO: add a step count, set truncation to be true once horizon is reached. currently one-step horizon
+        
+        self.step_counter += 1
+        truncated = self.step_counter >= self.cfg.horizon
 
         # calculate reward
         reward = new_score
