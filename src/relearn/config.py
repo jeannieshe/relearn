@@ -67,7 +67,8 @@ class Config:
     # experiment bookkeeping -- these drive the wandb run name/group so a run's
     # spreadsheet row (e.g. experiment "A", run_id "A001") is traceable in wandb.
     experiment: str = "A"       # experiment family -> wandb group
-    run_id: str = "A001"        # unique run label -> wandb run name
+    run_id: str = "A001"        # unique run label -> wandb run name (compact, sorts with spreadsheet)
+    description: str = ""      # free-text summary of what this run tests -> wandb notes
 
     agent: DQNConfig = field(default_factory=DQNConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
