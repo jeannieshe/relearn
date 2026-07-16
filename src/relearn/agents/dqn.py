@@ -150,6 +150,7 @@ def main(cfg: DictConfig):
         project="relearn-dqn",
         group=cfg.experiment,
         name=cfg.run_id,
+        notes=cfg.description,
         config={**resolved_config, "device": str(device)},
     )
     # Hydra already wrote the fully-resolved config and exact CLI overrides for
