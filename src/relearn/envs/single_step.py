@@ -33,6 +33,7 @@ class RelearnChemicalEnv(gym.Env):
         self.num_cells = cfg.num_cells
         self.cell_representation_dim = cfg.cell_representation_dim
         self.termination_epsilon = cfg.termination_epsilon
+        self.horizon = cfg.horizon
         self.msigdb_gene_set = cfg.msigdb_gene_set
 
         # which STATE fewshot run/checkpoint predicts next states -- this is the
@@ -153,6 +154,7 @@ class RelearnChemicalEnv(gym.Env):
 
         # reset the cell state
         self._cell_state = self.initial_cell_state
+        self._step_count = 0
 
         observation = self._get_obs()
         info = self._get_info()
@@ -170,10 +172,15 @@ class RelearnChemicalEnv(gym.Env):
 
         # update the state
         self._cell_state = next_state
+        self._step_count += 1
 
         # check termination, truncation criteria
+        # terminated: reached the apoptosis goal (score ~= 1) -- a real end state,
+        #   so the agent bootstraps no future value past it.
+        # truncated: hit the horizon without reaching the goal -- an artificial
+        #   cutoff, so the agent should still bootstrap the next state's value.
         terminated = abs(1 - new_score) <= self.termination_epsilon
-        truncated = True # TODO: add a step count, set truncation to be true once horizon is reached. currently one-step horizon
+        truncated = self._step_count >= self.horizon
 
         # calculate reward
         reward = new_score

@@ -41,6 +41,7 @@ class EnvConfig:
 
     # state transition function: which STATE fewshot run/checkpoint predicts next states
     tahoe_dataset_dir: str = "notebooks/jeannie/ST-HVG-Tahoe"
+    # tahoe_dataset_dir: str = "notebooks/alaysia/state_infer/ST-HVG-Tahoe"
     state_run_dir: str = "fewshot/state_generalization_X_hvg"
     checkpoint_name: str = "checkpoints/best.ckpt"
 
@@ -51,6 +52,10 @@ class EnvConfig:
     # termination criterion
     termination_epsilon: float = 0.1
 
+    # episode horizon: max number of perturbations the agent may apply before
+    # the episode is truncated. 1 recovers the original single-step behavior.
+    horizon: int = 1
+
     # rarely-varying dataset/machine paths
     tahoe_se_dir: str = "/large_storage/ctc/ML/transcriptomics_filtered/tahoe_se"
     dmso_control_pert: str = "[('DMSO_TF', 0.0, 'uM')]"
@@ -59,6 +64,11 @@ class EnvConfig:
 
 @dataclass
 class Config:
+    # experiment bookkeeping -- these drive the wandb run name/group so a run's
+    # spreadsheet row (e.g. experiment "A", run_id "A001") is traceable in wandb.
+    experiment: str = "A"       # experiment family -> wandb group
+    run_id: str = "A001"        # unique run label -> wandb run name
+
     agent: DQNConfig = field(default_factory=DQNConfig)
     env: EnvConfig = field(default_factory=EnvConfig)
 

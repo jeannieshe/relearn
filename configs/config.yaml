@@ -6,3 +6,13 @@ defaults:
   - agent: baseline
   - env: sw480
   - _self_
+
+# Name each run's output dir after its spreadsheet identity instead of a
+# timestamp: single runs land in outputs/<experiment>/<run_id>, and a --multirun
+# sweep nests each child under its own run_id inside outputs/<experiment>.
+hydra:
+  run:
+    dir: outputs/${experiment}/${run_id}
+  sweep:
+    dir: outputs/${experiment}
+    subdir: ${run_id}
