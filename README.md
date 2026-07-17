@@ -15,6 +15,8 @@ configs/
   config.yaml           # top-level Hydra composition (defaults: agent + env)
   agent/*.yaml          # named DQN hyperparameter variants
   env/*.yaml            # named environment variants (cell line, state rep, checkpoint, ...)
+scripts/
+  download_<MODEL>.py   # one per model — fetch its checkpoint from Hugging Face into data/models/
 ```
 
 `envs/` and `agents/` are packages (not single files) because more than one
@@ -22,6 +24,26 @@ implementation is expected on each side — e.g. a multi-step/combination
 environment alongside `small_molecules.py`, or a non-DQN agent alongside `dqn.py`.
 Add a new file under the matching package, named for what it *is*
 (`envs/multi_step_combo.py`, `agents/ppo.py`), not a version number.
+
+## Getting the model
+
+The environment's state-transition function is a STATE checkpoint that is **not**
+committed to git — the checkpoint alone is ~1 GB. Fetch it once from Hugging Face
+before your first run:
+
+```
+python scripts/download_ST-HVG-Tahoe.py
+```
+
+This downloads only what the agent loads (`best.ckpt` + `pert_onehot_map.pt`,
+plus ~2 MB of run metadata, ~1.08 GB total) into `data/models/ST-HVG-Tahoe/`,
+which is the default `env.tahoe_dataset_dir`. It deliberately skips the repo's
+multi-GB evaluation artifacts. One downloader per model lives in `scripts/`
+(see `scripts/README.md` for the naming convention and how to add another).
+
+The neutral start-state cache (`SW480_dmso_neutral_hvg.npy`) is not on Hugging
+Face; it is generated automatically on the first env init from `env.tahoe_se_dir`
+(requires cluster access), then cached.
 
 ## Running a training run
 
