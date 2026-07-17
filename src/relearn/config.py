@@ -42,8 +42,7 @@ class EnvConfig:
     hvg_gene_names_path: str = "/large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy"
 
     # state transition function: which STATE fewshot run/checkpoint predicts next states
-    tahoe_dataset_dir: str = "notebooks/jeannie/ST-HVG-Tahoe"
-    # tahoe_dataset_dir: str = "notebooks/alaysia/state_infer/ST-HVG-Tahoe"
+    tahoe_dataset_dir: str = "data/models/ST-HVG-Tahoe"
     state_run_dir: str = "fewshot/state_generalization_X_hvg"
     checkpoint_name: str = "checkpoints/best.ckpt"
 
