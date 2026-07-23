@@ -2,12 +2,16 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "marimo>=0.23.14",
+#     "matplotlib==3.11.1",
+#     "numpy==2.5.1",
+#     "pandas==3.0.5",
+#     "scipy==1.18.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.15"
 app = marimo.App(width="medium")
 
 
@@ -19,18 +23,22 @@ def _():
 
     import marimo as mo
     import matplotlib.pyplot as plt
+    import numpy as np
     import pandas as pd
 
-    return Path, ast, mo, pd, plt, re
+    return Path, ast, mo, np, pd, plt, re
 
 
 @app.cell
 def _(plt):
-    # LaTeX-style typography everywhere (Computer Modern), via matplotlib's
-    # built-in mathtext -- no system LaTeX/dvipng install required, so this
-    # renders identically on any machine. Any label can use "$...$" math syntax.
+    # Helvetica for regular text; Computer Modern is kept for math via
+    # mathtext.fontset so "$...$" equations still render LaTeX-style.
+    # True Helvetica isn't installed on this machine, so we point at the
+    # open-source URW/TeX-Gyre clones (metrically near-identical) instead
+    # of silently falling back to DejaVu Sans.
     plt.rcParams["mathtext.fontset"] = "cm"
-    plt.rcParams["font.family"] = "cmr10"
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = ["Nimbus Sans", "TeX Gyre Heros", "Helvetica", "Arial", "DejaVu Sans"]
     plt.rcParams["axes.formatter.use_mathtext"] = True
     return
 
@@ -315,6 +323,120 @@ def _(
 @app.cell
 def _(dmso_first_df, dmso_second_df, plot_cosine_vs_score_overlay):
     plot_cosine_vs_score_overlay(dmso_first_df, dmso_second_df)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Self-consistency distribution: scatter by sweep
+
+    Same comparison as the plots above, but with drug potency (the x-axis)
+    dropped entirely -- discrete jittered points per sweep (not a continuous
+    violin/density shape) showing the spread of `cosine_sim`.
+    """)
+    return
+
+
+@app.cell
+def _(DMSO_RING, GRIDLINE, MUTED, PRIMARY, SECONDARY, np, plt):
+    def plot_cosine_scatter(df_first, df_second):
+        """Same self-consistency comparison as the scatter/overlay plots above,
+        but with drug potency (the x-axis) dropped -- discrete jittered points
+        per sweep, not a continuous violin/density shape."""
+        fig, ax = plt.subplots(figsize=(7, 6.5))
+        fig.patch.set_facecolor("white")
+
+        rng = np.random.default_rng(0)
+        positions = [0, 1]
+        datasets = [df_first, df_second]
+        colors = ["tab:orange", "tab:blue"]
+        label_bg = dict(facecolor="white", edgecolor="none", alpha=0.88, pad=2)
+
+        for pos, df, color in zip(positions, datasets, colors):
+            jitter = rng.uniform(-0.18, 0.18, size=len(df))
+            xs = pos + jitter
+            ys = df["cosine_sim"].to_numpy()
+            ax.scatter(xs, ys, s=18, alpha=0.5, color=color, edgecolors="white", linewidths=0.3, zorder=3)
+
+            dmso_mask = (df["drug"] == "[('DMSO_TF', 0.0, 'uM')]").to_numpy()
+            dmso_i = np.flatnonzero(dmso_mask)[0]
+            ax.scatter([xs[dmso_i]], [ys[dmso_i]], s=90, facecolors="none",
+                       edgecolors=DMSO_RING, linewidths=1.6, zorder=4)
+
+        ceiling = max(df_first["cosine_sim"].max(), df_second["cosine_sim"].max())
+        ax.axhline(ceiling, color=MUTED, linestyle="--", linewidth=1.2, zorder=2)
+        ax.text(1.6, ceiling + 0.04, f"DMSO + DMSO cosine similarity ceiling at {ceiling:.3f}",
+                ha="right", va="top", fontsize=8.5, color=SECONDARY, zorder=5, bbox=label_bg)
+
+        ax.set_xlim(-0.7, 1.7)
+        ax.set_xticks(positions)
+        ax.set_xticklabels(["DMSO first,\ndrug second", "drug first,\nDMSO second"])
+        ax.tick_params(axis="x", length=5, width=0.8, colors=MUTED)
+        ax.set_ylabel("Cosine similarity between f(drug) and f(drug with DMSO)", fontsize=10, color=MUTED)
+        ax.set_title("Self-consistency of STATE under 2-step drug sequence: DMSO first vs. second", fontsize=13, fontweight="700", color=PRIMARY)
+
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+        for spine in ("left", "bottom"):
+            ax.spines[spine].set_color(GRIDLINE)
+        ax.tick_params(colors=MUTED, labelsize=9)
+        ax.grid(True, axis="y", color=GRIDLINE, linewidth=0.8)
+        ax.set_axisbelow(True)
+
+        fig.tight_layout()
+        return fig
+
+
+    return (plot_cosine_scatter,)
+
+
+@app.cell
+def _(dmso_first_df, dmso_second_df, plot_cosine_scatter):
+    plot_cosine_scatter(dmso_first_df, dmso_second_df)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Similarity between sweeps: correlation across drugs
+
+    Merge `dmso_first_df` and `dmso_second_df` on `drug`, then correlate each
+    metric (`cosine_sim`, `score_drug_alone`) between the two sweeps across all
+    shared drugs -- do the two sweep orders agree on *which* drugs are more or
+    less self-consistent?
+    """)
+    return
+
+
+@app.cell
+def _(dmso_first_df, dmso_second_df):
+    sweep_merged_df = dmso_first_df.merge(
+        dmso_second_df, on="drug", suffixes=("_first", "_second")
+    )
+
+    cosine_sim_pearson = sweep_merged_df["cosine_sim_first"].corr(
+        sweep_merged_df["cosine_sim_second"], method="pearson"
+    )
+    cosine_sim_spearman = sweep_merged_df["cosine_sim_first"].corr(
+        sweep_merged_df["cosine_sim_second"], method="spearman"
+    )
+    score_drug_alone_pearson = sweep_merged_df["score_drug_alone_first"].corr(
+        sweep_merged_df["score_drug_alone_second"], method="pearson"
+    )
+    score_drug_alone_spearman = sweep_merged_df["score_drug_alone_first"].corr(
+        sweep_merged_df["score_drug_alone_second"], method="spearman"
+    )
+
+    print(
+        f"cosine_sim (n={len(sweep_merged_df)} shared drugs): "
+        f"Pearson r = {cosine_sim_pearson:.4f}, Spearman rho = {cosine_sim_spearman:.4f}"
+    )
+    print(
+        f"score_drug_alone: "
+        f"Pearson r = {score_drug_alone_pearson:.4f}, Spearman rho = {score_drug_alone_spearman:.4f}"
+    )
     return
 
 
