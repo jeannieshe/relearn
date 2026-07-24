@@ -37,7 +37,16 @@ class EnvConfig:
     cell_type_name: str = "SW480"
     cell_type_accession_number: str = "CVCL_0546"
 
-    # state representation: which STATE gene panel the observation is expressed in
+    # state representation: which STATE embedding the observation is expressed in.
+    # embed_key is the single switch between representations -- it must match the
+    # obsm key the chosen STATE checkpoint was trained on ("X_hvg" or "X_state"),
+    # and it selects both the neutral-state source (obsm[embed_key]) and how the
+    # reward is scored (see RelearnChemicalEnv). "X_hvg" is 2000-dim raw HVGs the
+    # apoptosis signature scores directly; "X_state" is the 2058-dim SE-600M
+    # embedding, decoded back to the 2000-HVG panel via the model's gene_decoder
+    # before scoring. The env yaml (env=sw480 vs env=sw480_se) bundles embed_key
+    # with the coupled fields below so a run only needs to flip the one tag.
+    embed_key: str = "X_hvg"
     cell_representation_dim: int = 2000
     hvg_gene_names_path: str = "/large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy"
 

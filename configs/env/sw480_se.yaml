@@ -1,0 +1,35 @@
+# SW480 in the SE-600M State Embedding representation instead of raw HVGs.
+# This is the one-tag counterpart to env=sw480: run with
+#   python src/relearn/agents/dqn.py env=sw480_se
+# and everything downstream (observation space, state transition, reward
+# decoding, neutral state) switches to the 2058-dim X_state embedding.
+#
+# What differs from env=sw480 (HVG), and why they must move together:
+#   embed_key            selects obsm['X_state'] for the neutral state AND tells
+#                        the env the observation is an embedding, so the reward
+#                        decodes it to the 2000-HVG panel via the model's
+#                        gene_decoder before UCell-scoring apoptosis.
+#   cell_representation_dim  2058-dim SE-600M embedding (vs 2000 raw HVGs).
+#   tahoe_dataset_dir / state_run_dir  the ST-SE-Tahoe checkpoint trained on
+#                        X_state (fetch with scripts/download_ST-SE-Tahoe.py).
+# Everything else (cell line, HVG gene-name panel used for scoring, apoptosis
+# signature, termination) is shared with env=sw480 and inherited from EnvConfig.
+cell_type_name: SW480
+cell_type_accession_number: CVCL_0546
+
+embed_key: X_state
+cell_representation_dim: 2058
+hvg_gene_names_path: /large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy
+
+tahoe_dataset_dir: data/models/ST-SE-Tahoe
+state_run_dir: fewshot/state_generalization_X_state
+checkpoint_name: checkpoints/best.ckpt
+
+msigdb_gene_set: HALLMARK_APOPTOSIS
+gmt_path: data/HALLMARK_APOPTOSIS.v2026.1.Hs.gmt
+
+termination_epsilon: 0.1
+
+tahoe_se_dir: /large_storage/ctc/ML/transcriptomics_filtered/tahoe_se
+dmso_control_pert: "[('DMSO_TF', 0.0, 'uM')]"
+num_cells: 1
