@@ -5,12 +5,10 @@ This environment is specifically designed to model a reinforcement learning envi
 import gymnasium as gym
 import numpy as np
 from typing import Optional
-import torch
-import pickle
 import h5py
-from state.tx.models.state_transition import StateTransitionPerturbationModel
 from pathlib import Path
 from relearn.config import EnvConfig
+from relearn.transitions import build_transition_model
 from relearn.utils import ucell_score, _load_gmt_signature
 
 class RelearnChemicalEnv(gym.Env):
@@ -37,6 +35,7 @@ class RelearnChemicalEnv(gym.Env):
         self.horizon = cfg.horizon
         self.msigdb_gene_set = cfg.msigdb_gene_set
 
+<<<<<<< Updated upstream
         # which STATE embedding the agent observes and the model transitions in.
         # "X_hvg" is already gene-expression space (2000 HVGs) that the apoptosis
         # reward can score directly; any other embedding (e.g. "X_state", the
@@ -55,6 +54,12 @@ class RelearnChemicalEnv(gym.Env):
         self.pert_map = torch.load(Path(state_run_dir / "pert_onehot_map.pt"), weights_only=False)
         self.drug_list = list(self.pert_map.keys()) # actions are (name, concentration, units)
         self.pert_matrix = torch.stack(list(self.pert_map.values())) # shape: (1138, 1138)
+=======
+        # the state-transition function: which virtual cell model predicts next
+        # states, selected via cfg.transition_model ("state" or "rhaister")
+        self._transition_model = build_transition_model(cfg)
+        self.drug_list = self._transition_model.drug_list # actions are (name, concentration, units)
+>>>>>>> Stashed changes
         self.action_space = gym.spaces.Discrete(len(self.drug_list))
 
         # define what the agent can observe
@@ -74,6 +79,7 @@ class RelearnChemicalEnv(gym.Env):
         self.sig_genes = _load_gmt_signature(cfg.gmt_path, self.msigdb_gene_set)
         self.apoptosis_predictor = ucell_score
 
+<<<<<<< Updated upstream
         # define the state applier
         # load the STATE model
         checkpoint = Path(state_run_dir / cfg.checkpoint_name)
@@ -98,6 +104,8 @@ class RelearnChemicalEnv(gym.Env):
         self._cell_state = self.initial_cell_state
         self._step_count = 0
 
+=======
+>>>>>>> Stashed changes
     def _load_dmso_neutral_state(self) -> np.ndarray:
         """
         Neutral initial state for self.cell_type_name: the mean STATE profile in
@@ -176,35 +184,12 @@ class RelearnChemicalEnv(gym.Env):
 
     def _get_info(self):
         return {
+<<<<<<< Updated upstream
             "apoptosis score": self._score_apoptosis(self._cell_state),
+=======
+            "apoptosis score": self._current_score,
+>>>>>>> Stashed changes
         }
-
-    def _state_stepper_helper(self, cell_state: np.ndarray, action: int) -> np.ndarray:
-        """
-        Helper for cell stepper to match the expected STATE input. StateTransitionPerturbationModel takes in a batch dict and returns predicted cell states.
-        model.forward(batch, padded=False) where batch must have ctrl_cell_emb, pert_emb, and pert_name
-
-        ctrl_cell_emb has shape [S, E_in] being the control cell embeddings
-        pert_emb has shape [S, pert_dim] and represents the perturbation one-hot vector, repeated S times
-        pert_name (type: list[str]) has length S and is the drug name string, repeated S times
-
-        With padded=False, S can be any length.
-        """
-        drug_name = self.drug_list[action]
-        pert_vec = self.pert_map[drug_name].float() # shape: (1138,)
-
-        # build batch
-        batch = {
-            "ctrl_cell_emb": torch.tensor(cell_state, dtype=torch.float32, device=self._device).unsqueeze(0), # [self.num_cells, E_in]
-            "pert_emb": pert_vec.unsqueeze(0).to(self._device), # [self.num_cells, pert_dim]
-            "pert_name": [str(drug_name)],
-        }
-
-        with torch.no_grad():
-            pred = self._state_stepper.forward(batch, padded=False) # [self.num_cells, self.cell_representation_dim]
-        
-        return pred.squeeze(0).cpu().numpy() # [self.cell_representation_dim]
-
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         # seed the rng
@@ -213,6 +198,9 @@ class RelearnChemicalEnv(gym.Env):
         # reset the cell state
         self._cell_state = self.initial_cell_state
         self._step_count = 0
+        self._current_score = self.apoptosis_predictor(
+            self._cell_state, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes
+        )
 
         observation = self._get_obs()
         info = self._get_info()
@@ -222,14 +210,21 @@ class RelearnChemicalEnv(gym.Env):
     def step(self, action):
         # begin with an uninformed agent, take a random action
         # given an action, apply it to the state
-        next_state = self._state_stepper_helper(self._cell_state, action)
+        next_state = self._transition_model.step(self._cell_state, action)
 
         # score the state -- decodes the embedding to the 2000-HVG panel first
         # when the observation isn't already raw HVGs (see _to_gene_expression)
         new_score = self._score_apoptosis(next_state)
 
+        # make progress the signal instead of raw reward
+        # potential based shaping looks like reward_t = score(s_t) - score(s_{t_1})
+        # this is policy invariant (does not change the optimal policy of the agent)
+        old_score = self._current_score
+        delta = new_score - old_score
+
         # update the state
         self._cell_state = next_state
+        self._current_score = new_score
         self._step_count += 1
 
         # check termination, truncation criteria
@@ -241,7 +236,7 @@ class RelearnChemicalEnv(gym.Env):
         truncated = self._step_count >= self.horizon
 
         # calculate reward
-        reward = new_score
+        reward = delta
 
         observation = self._get_obs()
         info = self._get_info()

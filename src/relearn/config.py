@@ -50,10 +50,17 @@ class EnvConfig:
     cell_representation_dim: int = 2000
     hvg_gene_names_path: str = "/large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy"
 
-    # state transition function: which STATE fewshot run/checkpoint predicts next states
+    # state transition function: which virtual cell model predicts next states
+    transition_model: str = "state"  # "state" or "rhaister"
+
+    # STATE fewshot run/checkpoint (used when transition_model == "state")
     tahoe_dataset_dir: str = "data/models/ST-HVG-Tahoe"
     state_run_dir: str = "fewshot/state_generalization_X_hvg"
     checkpoint_name: str = "checkpoints/best.ckpt"
+
+    # Rhaister fewshot run (used when transition_model == "rhaister")
+    rhaister_dataset_dir: str = "data/models/Rhaister"
+    rhaister_experiment_name: str = "tahoe_fewshot"
 
     # reward signature
     msigdb_gene_set: str = "HALLMARK_APOPTOSIS"

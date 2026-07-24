@@ -1,0 +1,10 @@
+# Same SW480 environment as sw480.yaml, but backed by Rhaister (additive-ALS +
+# ridge + calibration MLP) instead of STATE as the state-transition function.
+# Rhaister predicts a delta relative to a fixed DMSO baseline per (cell,
+# perturbation) rather than a genuine sequential next-state, so multi-step
+# episodes (horizon > 1) are only an additive-delta approximation -- see
+# EXPERIMENTS.md for the reasoning.
+transition_model: rhaister
+
+rhaister_dataset_dir: data/models/Rhaister
+rhaister_experiment_name: tahoe_fewshot

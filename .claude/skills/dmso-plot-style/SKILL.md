@@ -168,6 +168,16 @@ outcome in the data. X-axis ticks are made explicit with
 `ax.tick_params(axis="x", length=5, width=0.8, colors=MUTED)` since a
 2-category axis otherwise reads as bare labels with no tick marks.
 
+Worst-offender labeling is **per population** here (3 labels for
+`df_first`, 3 for `df_second`), unlike the pooled top-3 in the overlay
+plot above -- each sweep gets its own `df.nsmallest(3, "cosine_sim")`,
+labeled on a shared 3-row shelf below the data (`row_ys = [-0.02,
+-0.065, -0.11]`, with `ax.set_ylim(min(row_ys) - 0.03, ...)` to make
+room). The same jitter-alignment rule as the DMSO ring applies: look up
+each worst row's position in the *same* `xs`/`ys` arrays via
+`df.index.get_indexer(worst.index)` rather than redrawing jitter, so the
+connector line drops straight down from the actual dot.
+
 ## Reused identifiers across the notebook
 
 The drug identity string for DMSO is always matched as the literal

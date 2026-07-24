@@ -339,7 +339,7 @@ def _(mo):
 
 
 @app.cell
-def _(DMSO_RING, GRIDLINE, MUTED, PRIMARY, SECONDARY, np, plt):
+def _(DMSO_RING, GRIDLINE, MUTED, PRIMARY, SECONDARY, ast, np, plt, re):
     def plot_cosine_scatter(df_first, df_second):
         """Same self-consistency comparison as the scatter/overlay plots above,
         but with drug potency (the x-axis) dropped -- discrete jittered points
@@ -352,6 +352,7 @@ def _(DMSO_RING, GRIDLINE, MUTED, PRIMARY, SECONDARY, np, plt):
         datasets = [df_first, df_second]
         colors = ["tab:orange", "tab:blue"]
         label_bg = dict(facecolor="white", edgecolor="none", alpha=0.88, pad=2)
+        row_ys = [-0.02, -0.065, -0.11]
 
         for pos, df, color in zip(positions, datasets, colors):
             jitter = rng.uniform(-0.18, 0.18, size=len(df))
@@ -363,6 +364,23 @@ def _(DMSO_RING, GRIDLINE, MUTED, PRIMARY, SECONDARY, np, plt):
             dmso_i = np.flatnonzero(dmso_mask)[0]
             ax.scatter([xs[dmso_i]], [ys[dmso_i]], s=90, facecolors="none",
                        edgecolors=DMSO_RING, linewidths=1.6, zorder=4)
+
+            # direct-label the 3 worst self-consistency offenders for this
+            # population on a staggered shelf below the data, keyed to each
+            # point's own jittered x -- same idea as plot_cosine_vs_score
+            worst = df.nsmallest(3, "cosine_sim")
+            worst_pos = df.index.get_indexer(worst.index)
+            for row_i, (df_pos, (_, r)) in enumerate(zip(worst_pos, worst.iterrows())):
+                name, conc, _units = ast.literal_eval(r["drug"])[0]
+                name = re.sub(r"\s*\([^)]*\)\s*$", "", name)
+                label = rf"{name} ({conc:g}$\mu$M)" if name == "Homoharringtonine" else name
+                row_y = row_ys[row_i]
+                px, py = xs[df_pos], ys[df_pos]
+                ax.plot([px, px], [py - 0.012, row_y + 0.012], color=MUTED, linewidth=0.7, zorder=4)
+                ax.text(px, row_y, label, ha="center", va="center", fontsize=7.2, color=SECONDARY,
+                        zorder=5, bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=1.5))
+
+        ax.set_ylim(min(row_ys) - 0.03, ax.get_ylim()[1])
 
         ceiling = max(df_first["cosine_sim"].max(), df_second["cosine_sim"].max())
         ax.axhline(ceiling, color=MUTED, linestyle="--", linewidth=1.2, zorder=2)
@@ -392,7 +410,7 @@ def _(DMSO_RING, GRIDLINE, MUTED, PRIMARY, SECONDARY, np, plt):
 
 
 @app.cell
-def _(dmso_first_df, dmso_second_df, plot_cosine_scatter):
+def self_consistency_dmso(dmso_first_df, dmso_second_df, plot_cosine_scatter):
     plot_cosine_scatter(dmso_first_df, dmso_second_df)
     return
 
