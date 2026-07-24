@@ -35,7 +35,6 @@ class RelearnChemicalEnv(gym.Env):
         self.horizon = cfg.horizon
         self.msigdb_gene_set = cfg.msigdb_gene_set
 
-<<<<<<< Updated upstream
         # which STATE embedding the agent observes and the model transitions in.
         # "X_hvg" is already gene-expression space (2000 HVGs) that the apoptosis
         # reward can score directly; any other embedding (e.g. "X_state", the
@@ -46,20 +45,10 @@ class RelearnChemicalEnv(gym.Env):
         self.embed_key = cfg.embed_key
         self._output_is_gene_space = self.embed_key in ("X_hvg", None)
 
-        # which STATE fewshot run/checkpoint predicts next states -- this is the
-        # "state transition function" axis: pert map and model both come from it
-        state_run_dir = self.tahoe_dataset_dir / cfg.state_run_dir
-
-        # define action space
-        self.pert_map = torch.load(Path(state_run_dir / "pert_onehot_map.pt"), weights_only=False)
-        self.drug_list = list(self.pert_map.keys()) # actions are (name, concentration, units)
-        self.pert_matrix = torch.stack(list(self.pert_map.values())) # shape: (1138, 1138)
-=======
         # the state-transition function: which virtual cell model predicts next
         # states, selected via cfg.transition_model ("state" or "rhaister")
         self._transition_model = build_transition_model(cfg)
         self.drug_list = self._transition_model.drug_list # actions are (name, concentration, units)
->>>>>>> Stashed changes
         self.action_space = gym.spaces.Discrete(len(self.drug_list))
 
         # define what the agent can observe
@@ -79,23 +68,15 @@ class RelearnChemicalEnv(gym.Env):
         self.sig_genes = _load_gmt_signature(cfg.gmt_path, self.msigdb_gene_set)
         self.apoptosis_predictor = ucell_score
 
-<<<<<<< Updated upstream
-        # define the state applier
-        # load the STATE model
-        checkpoint = Path(state_run_dir / cfg.checkpoint_name)
-        self._state_stepper = StateTransitionPerturbationModel.load_from_checkpoint(checkpoint)
-        self._state_stepper.eval()
-        self._device = next(self._state_stepper.parameters()).device
-
         # when the observation is an embedding (not raw HVGs), the reward is scored
-        # on gene expression decoded from that embedding, so the checkpoint must
-        # carry a gene_decoder. Fail fast here rather than at the first step().
-        if not self._output_is_gene_space and getattr(self._state_stepper, "gene_decoder", None) is None:
+        # on gene expression decoded from that embedding, so the transition model
+        # must carry a gene_decoder. Fail fast here rather than at the first step().
+        if not self._output_is_gene_space and getattr(self._transition_model, "gene_decoder", None) is None:
             raise ValueError(
                 f"embed_key={self.embed_key!r} is an embedding space, so the reward "
-                "needs the model's gene_decoder to map it back to the 2000-HVG panel, "
-                f"but checkpoint {checkpoint} has no gene_decoder. Use a checkpoint "
-                "trained with a decoder (e.g. ST-SE-Tahoe) or set embed_key=X_hvg."
+                "needs a gene_decoder to map it back to the 2000-HVG panel, but "
+                f"transition_model={cfg.transition_model!r} has no gene_decoder. Use a "
+                "checkpoint trained with a decoder (e.g. ST-SE-Tahoe) or set embed_key=X_hvg."
             )
 
         # begin with a neutral cell state: mean STATE profile (in the embed_key
@@ -104,8 +85,6 @@ class RelearnChemicalEnv(gym.Env):
         self._cell_state = self.initial_cell_state
         self._step_count = 0
 
-=======
->>>>>>> Stashed changes
     def _load_dmso_neutral_state(self) -> np.ndarray:
         """
         Neutral initial state for self.cell_type_name: the mean STATE profile in
@@ -171,10 +150,7 @@ class RelearnChemicalEnv(gym.Env):
         """
         if self._output_is_gene_space:
             return cell_state
-        with torch.no_grad():
-            latent = torch.as_tensor(cell_state, dtype=torch.float32, device=self._device)
-            genes = self._state_stepper.gene_decoder(latent.unsqueeze(0))  # [1, 2000]
-        return genes.squeeze(0).cpu().numpy()
+        return self._transition_model.decode_to_genes(cell_state)  # type: ignore[attr-defined]
 
     def _score_apoptosis(self, cell_state: np.ndarray) -> float:
         """Apoptosis reward for a cell state: decode to gene space if needed, then
@@ -184,11 +160,7 @@ class RelearnChemicalEnv(gym.Env):
 
     def _get_info(self):
         return {
-<<<<<<< Updated upstream
             "apoptosis score": self._score_apoptosis(self._cell_state),
-=======
-            "apoptosis score": self._current_score,
->>>>>>> Stashed changes
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -198,9 +170,7 @@ class RelearnChemicalEnv(gym.Env):
         # reset the cell state
         self._cell_state = self.initial_cell_state
         self._step_count = 0
-        self._current_score = self.apoptosis_predictor(
-            self._cell_state, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes
-        )
+        self._current_score = self._score_apoptosis(self._cell_state)
 
         observation = self._get_obs()
         info = self._get_info()

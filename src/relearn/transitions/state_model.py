@@ -27,6 +27,10 @@ class StateTransitionModel:
         self._model.eval()
         self._device = next(self._model.parameters()).device
 
+        # exposed for RelearnChemicalEnv's embed_key != X_hvg decode path (see
+        # _to_gene_expression); None if this checkpoint wasn't trained with one
+        self.gene_decoder = getattr(self._model, "gene_decoder", None)
+
     def step(self, cell_state: np.ndarray, action: int) -> np.ndarray:
         """
         StateTransitionPerturbationModel takes in a batch dict and returns predicted
@@ -54,3 +58,13 @@ class StateTransitionModel:
             pred = self._model.forward(batch, padded=False)  # [1, cell_representation_dim]
 
         return pred.squeeze(0).cpu().numpy()  # [cell_representation_dim]
+
+    def decode_to_genes(self, cell_state: np.ndarray) -> np.ndarray:
+        """Decode an embed_key latent (e.g. X_state) back to the 2000-HVG gene
+        panel via this checkpoint's gene_decoder (see EnvConfig.embed_key)."""
+        if self.gene_decoder is None:
+            raise ValueError("this checkpoint has no gene_decoder to decode with")
+        with torch.no_grad():
+            latent = torch.as_tensor(cell_state, dtype=torch.float32, device=self._device)
+            genes = self.gene_decoder(latent.unsqueeze(0))  # [1, 2000]
+        return genes.squeeze(0).cpu().numpy()

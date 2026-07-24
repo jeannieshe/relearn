@@ -11,11 +11,8 @@ One script per model, named `download_<MODEL>.py`, so you run only what you need
 | Script | Model | Downloads into |
 |---|---|---|
 | `download_ST-HVG-Tahoe.py` | `arcinstitute/ST-HVG-Tahoe` (2000-HVG STATE, `state_generalization_X_hvg` fewshot run) | `data/models/ST-HVG-Tahoe/` |
-<<<<<<< Updated upstream
 | `download_ST-SE-Tahoe.py` | `arcinstitute/ST-SE-Tahoe` (2058-dim SE-600M embedding, `state_generalization_X_state` fewshot run) | `data/models/ST-SE-Tahoe/` |
-=======
 | `download_Rhaister.py` | `tahoebio/Rhaister` (additive-ALS + ridge + calibration MLP) | `data/models/Rhaister/` |
->>>>>>> Stashed changes
 
 Run from the repo root:
 
