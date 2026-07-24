@@ -6,6 +6,8 @@
 cell_type_name: SW480
 cell_type_accession_number: CVCL_0546
 
+# raw-HVG representation; see env=sw480_se for the SE-600M embedding variant
+embed_key: X_hvg
 cell_representation_dim: 2000
 hvg_gene_names_path: /large_storage/ctc/userspace/aadduri/datasets/tahoe_19k_to_2k_names.npy
 
