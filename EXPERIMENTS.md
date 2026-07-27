@@ -83,7 +83,8 @@ point holds (`ctrl→DMSO` vs real DMSO = 0.78× floor), and pass-1 accuracy is 
 visible and good (`ctrl→A` vs real A cells, cos 0.877 / 0.80× floor): STATE's
 single-drug predictions sit within measurement noise of real cells.
 
-Not fixable by plumbing — the model ignores the basal:
+Not fixable by plumbing — the model is insensitive to the basal ("ignores the
+basal" below is too strong; the 2026-07-27 control sweep shows it is read):
 
     realA→B vs ctrl→B    cos 0.967   0.33× floor
     realB→A vs ctrl→A    cos 0.976   0.33× floor
@@ -135,3 +136,52 @@ on any single-agent ranking.
 
 Next: the sequential framing is closed. Decide between single-step-with-blended-
 perturbations, or sourcing combination data and a model trained on it.
+
+## 2026-07-27 — the basal IS read; STATE attenuates realistic variation, not all variation
+
+Run: `python src/relearn/experiments/basal_control_sweep.py --n-drugs 6 --n-draws 5`
+| Data: `artifacts/basal_control_sweep_8perts_0.5uM_S256.csv`
+
+Hypothesis (control suggested in review): the 07-25 result has two readings —
+(a) the basal is read but weighted weakly, or (b) the basal tensor never reaches
+`forward` and the model is a lookup table from perturbation one-hot to a memorized
+response. Distinguish them by holding the perturbation FIXED and varying only the
+basal, from real drug-treated cells through to garbage. 8 perturbations × 8 basal
+conditions × 5 draws, all SW480.
+
+Result: **(b) is dead, and it corrects the mechanism claim from 07-25.** Units are
+× the DMSO split-half floor:
+
+    basal condition   input moved   output moved    gain   cos to ref
+    dmso_b                   1.00           1.00   1.000       0.9743
+    palbo_lo (0.5uM)         2.49           1.03   0.415       0.9663
+    veneto   (0.5uM)         2.11           1.03   0.491       0.9671
+    palbo_hi (5.0uM)         4.19           1.18   0.281       0.9397
+    gaussian                 7.72           1.69   0.220       0.8710
+    shuffled                23.16          42.82   1.855       0.2002
+    zeros                   96.23         319.97   3.334       0.3505
+
+Zeros move the output 320× floor with max per-gene difference 13.11 — the basal
+reaches `forward` with enormous range, so it is not a wiring bug and there is no
+missing-tensor artifact. But every *real* drug-treated basal moves the output
+1.03–1.18× floor, i.e. inside resampling noise.
+
+The correct statement is therefore not "STATE ignores the basal" but **STATE
+attenuates realistic within-line biological variation to below noise while
+remaining highly sensitive off-manifold.** Gain is sublinear (0.22–0.49) for
+realistic inputs and superlinear (1.9–3.3) for garbage — a contractive map near
+the training manifold that explodes outside it. Note `gaussian` (per-gene
+marginals preserved, gene–gene correlation destroyed) is attenuated at 1.69×
+despite a 7.72× input change, while `shuffled` (gene identity destroyed, each
+cell's values/sparsity/library size intact) explodes to 42.8×: the basal encoder
+is sensitive to *which* genes are expressed, not to *how much*.
+
+There is a real dose-graded trend — palbo 5.0 µM moves the output more than
+0.5 µM (1.18× vs 1.03×, cos 0.940 vs 0.966) — but it sits far below the floor.
+
+Practical conclusion from 07-25 is unchanged and now better founded: sequential
+dosing remains unusable, because drug treatment produces exactly the kind of
+variation the model compresses away. Runtime 3m00s.
+
+Next: unchanged — single-step with blended perturbations, or a model trained on
+sequential/combination data.
