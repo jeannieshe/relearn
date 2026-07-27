@@ -59,6 +59,28 @@ class StateTransitionModel:
 
         return pred.squeeze(0).cpu().numpy()  # [cell_representation_dim]
 
+    def step_with_pert_vector(self, cell_state: np.ndarray, pert_vec: torch.Tensor) -> np.ndarray:
+        """
+        Same as step(), but takes an arbitrary perturbation vector instead of an
+        action index -- the escape hatch for co-perturbation, where the input is
+        a two-hot (or weighted) combination rather than a single drug's one-hot.
+
+        forward() never reads pert_name (only pert_emb reaches the network), so
+        an off-one-hot pert_emb is a well-formed input. It is still extrapolation:
+        pert_encoder is a single Linear(1138, 768) trained exclusively on one-hot
+        inputs, so encode(a + b) == encode(a) + encode(b) - bias by construction.
+        The model has no learned representation of drug combinations; whatever
+        non-additivity shows up downstream comes from the transformer and decoder.
+        """
+        batch = {
+            "ctrl_cell_emb": torch.tensor(cell_state, dtype=torch.float32, device=self._device).unsqueeze(0),
+            "pert_emb": pert_vec.float().unsqueeze(0).to(self._device),
+            "pert_name": ["<combination>"],
+        }
+        with torch.no_grad():
+            pred = self._model.forward(batch, padded=False)
+        return pred.squeeze(0).cpu().numpy()
+
     def decode_to_genes(self, cell_state: np.ndarray) -> np.ndarray:
         """Decode an embed_key latent (e.g. X_state) back to the 2000-HVG gene
         panel via this checkpoint's gene_decoder (see EnvConfig.embed_key)."""
