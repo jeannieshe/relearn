@@ -12,7 +12,7 @@ from relearn.transitions import build_transition_model
 from relearn.utils import ucell_score, _load_gmt_signature
 
 class RelearnChemicalEnv(gym.Env):
-    def __init__(self, cfg: Optional[EnvConfig] = None):
+    def __init__(self, cfg: Optional[EnvConfig] = None, seed: Optional[int] = None):
         cfg = cfg if cfg is not None else EnvConfig()
         self.cfg = cfg
 
@@ -51,13 +51,13 @@ class RelearnChemicalEnv(gym.Env):
         self.drug_list = self._transition_model.drug_list # actions are (name, concentration, units)
         self.action_space = gym.spaces.Discrete(len(self.drug_list))
 
-        # define what the agent can observe
-        # pass in the cell state, expressed in the cfg.embed_key representation
-        # (2000-dim for X_hvg, 2058-dim for the X_state SE embedding)
+        # define what the agent can observe: a set of num_cells cell states,
+        # each expressed in the cfg.embed_key representation (2000-dim for
+        # X_hvg, 2058-dim for the X_state SE embedding) -- see _get_obs().
         self.observation_space = gym.spaces.Box(
             low=0,
             high=np.inf,
-            shape=(self.cell_representation_dim,),
+            shape=(self.num_cells, self.cell_representation_dim),
             dtype=np.float32
         )
 
@@ -79,29 +79,48 @@ class RelearnChemicalEnv(gym.Env):
                 "checkpoint trained with a decoder (e.g. ST-SE-Tahoe) or set embed_key=X_hvg."
             )
 
-        # begin with a neutral cell state: mean STATE profile (in the embed_key
-        # representation) across all cells of this line treated with DMSO_TF
-        self.initial_cell_state = self._load_dmso_neutral_state()
-        self._cell_state = self.initial_cell_state
+        # seed the rng that reset() draws fresh control-cell sets from. Passing
+        # the same seed here reproduces the whole run's draw sequence end to
+        # end (mirrors gym's own reset(seed=...) contract); reset() itself is
+        # never reseeded unless the caller explicitly passes reset(seed=...)
+        # again, so consecutive episodes get *different* draws by default.
+        self.rng = np.random.default_rng(seed=seed)
+
+        # real DMSO control pool for this cell line, in the embed_key
+        # representation. reset() defaults to replaying the same num_cells-sized
+        # starting set every episode (drawn once here); pass
+        # reset(options={"resample": True}) to draw a fresh set instead, which
+        # then becomes the new default until resampled again.
+        self._control_pool = self._load_dmso_control_pool()
+        self._initial_cell_set = self._draw_cell_set()
+        self._cell_state = None
         self._step_count = 0
 
-    def _load_dmso_neutral_state(self) -> np.ndarray:
-        """
-        Neutral initial state for self.cell_type_name: the mean STATE profile in
-        the self.embed_key representation (obsm[embed_key] -- 2000-HVG X_hvg or
-        the 2058-dim X_state SE embedding) across every cell in Tahoe-100M
-        treated with the DMSO_TF vehicle control. A single control cell is too
-        sparse (dropout leaves only ~50/2000 genes nonzero) to be a stable
-        starting point, so we average over the full control population for this
-        cell line. Cached to disk after the first (multi-GB h5ad) read.
+    def _draw_cell_set(self) -> np.ndarray:
+        """Sample self.num_cells rows from self._control_pool using self.rng."""
+        idx = self.rng.choice(
+            len(self._control_pool), size=self.num_cells, replace=len(self._control_pool) < self.num_cells
+        )
+        return self._control_pool[idx]
 
-        The cache is keyed by embed_key (e.g. SW480_dmso_neutral_hvg.npy vs
-        SW480_dmso_neutral_state.npy) so HVG and SE runs never reuse each
-        other's neutral state.
+    def _load_dmso_control_pool(self) -> np.ndarray:
+        """
+        Every real cell of self.cell_type_name treated with the DMSO_TF vehicle
+        control, in the self.embed_key representation (obsm[embed_key] --
+        2000-HVG X_hvg or the 2058-dim X_state SE embedding). reset() samples
+        self.num_cells rows from this pool fresh each episode -- a single
+        control cell is too sparse (dropout leaves only ~50/2000 genes nonzero)
+        to be a stable starting point, but a set of num_cells doesn't need
+        pre-averaging since the transition model attends over the set itself.
+        Cached to disk after the first (multi-GB h5ad) read.
+
+        The cache is keyed by embed_key (e.g. SW480_dmso_pool_hvg.npy vs
+        SW480_dmso_pool_state.npy) so HVG and SE runs never reuse each other's
+        pool.
         """
         # "X_hvg" -> "hvg", "X_state" -> "state": short, back-compatible suffix
         key_suffix = self.embed_key[2:] if self.embed_key.startswith("X_") else self.embed_key
-        cache_path = self.tahoe_dataset_dir / f"{self.cell_type_name}_dmso_neutral_{key_suffix}.npy"
+        cache_path = self.tahoe_dataset_dir / f"{self.cell_type_name}_dmso_pool_{key_suffix}.npy"
         if cache_path.exists():
             return np.load(cache_path).astype(np.float32)
 
@@ -127,13 +146,13 @@ class RelearnChemicalEnv(gym.Env):
             pert_cats = [c.decode() if isinstance(c, bytes) else c for c in f["obs"]["drugname_drugconc"]["categories"][:]]
             control_idx = pert_cats.index(self.dmso_control_pert)
             pert_codes = f["obs"]["drugname_drugconc"]["codes"][:]
-            control_rows = np.where(pert_codes == control_idx)[0]
-            neutral_state = f["obsm"][self.embed_key][control_rows, :].mean(axis=0)
+            control_rows = np.sort(np.where(pert_codes == control_idx)[0])  # h5py fancy indexing needs sorted rows
+            pool = f["obsm"][self.embed_key][control_rows, :]
 
-        neutral_state = neutral_state.astype(np.float32)
+        pool = pool.astype(np.float32)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        np.save(cache_path, neutral_state)
-        return neutral_state
+        np.save(cache_path, pool)
+        return pool
 
     def _get_obs(self):
         return self._cell_state
@@ -153,10 +172,13 @@ class RelearnChemicalEnv(gym.Env):
         return self._transition_model.decode_to_genes(cell_state)  # type: ignore[attr-defined]
 
     def _score_apoptosis(self, cell_state: np.ndarray) -> float:
-        """Apoptosis reward for a cell state: decode to gene space if needed, then
-        UCell-score against the signature on STATE's 2000-HVG panel order."""
+        """Apoptosis reward for a set of cell states: decode to gene space if
+        needed, UCell-score every cell against the signature on STATE's
+        2000-HVG panel order, then average the per-cell scores into the single
+        scalar step()/reset() use for reward shaping and termination."""
         expr = self._to_gene_expression(cell_state)
-        return self.apoptosis_predictor(expr, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes)
+        scores = self.apoptosis_predictor(expr, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes)
+        return float(np.mean(scores))
 
     def _get_info(self):
         return {
@@ -164,11 +186,19 @@ class RelearnChemicalEnv(gym.Env):
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
-        # seed the rng
         super().reset(seed=seed)
+        # reset(seed=X) reseeds self.rng and redraws the fixed starting set
+        # under the new seed (so a given seed always reproduces the same set).
+        if seed is not None:
+            self.rng = np.random.default_rng(seed=seed)
+            self._initial_cell_set = self._draw_cell_set()
+        # reset(options={"resample": True}) explicitly requests a fresh draw
+        # without needing a new seed; it becomes the new default going forward.
+        elif options and options.get("resample"):
+            self._initial_cell_set = self._draw_cell_set()
 
-        # reset the cell state
-        self._cell_state = self.initial_cell_state
+        # default: replay the same starting set every episode
+        self._cell_state = self._initial_cell_set
         self._step_count = 0
         self._current_score = self._score_apoptosis(self._cell_state)
 
@@ -177,11 +207,14 @@ class RelearnChemicalEnv(gym.Env):
 
         return observation, info
 
-    def step(self, action):
-        # begin with an uninformed agent, take a random action
-        # given an action, apply it to the state
-        next_state = self._transition_model.step(self._cell_state, action)
-
+    def _advance(self, next_state: np.ndarray):
+        """
+        Shared bookkeeping for step()/step_vector(): score the new state,
+        potential-based reward shaping, advance self._cell_state, check
+        termination/truncation. Factored out so both a single-drug action and
+        an arbitrary (e.g. multi-hot combination) perturbation vector go
+        through identical accounting.
+        """
         # score the state -- decodes the embedding to the 2000-HVG panel first
         # when the observation isn't already raw HVGs (see _to_gene_expression)
         new_score = self._score_apoptosis(next_state)
@@ -213,4 +246,45 @@ class RelearnChemicalEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
-        
+    def step(self, action):
+        # begin with an uninformed agent, take a random action
+        # given an action, apply it to the state
+        next_state = self._transition_model.step(self._cell_state, action)
+        return self._advance(next_state)
+
+    def step_vector(self, pert_vec):
+        """
+        Same as step(), but takes an arbitrary perturbation vector instead of
+        a single drug_list index -- e.g. a multi-hot combination of several
+        drugs applied simultaneously. Build one with self.multi_hot(), or hand
+        -craft any weighted combination (see StateTransitionModel.step_with_pert_vector
+        for the extrapolation caveats of a non-one-hot pert_emb).
+
+        Not part of action_space / Discrete -- this bypasses the discrete
+        action contract agents/dqn.py and agents/dqn_set.py rely on, so it's
+        meant for standalone combinatorial-perturbation experiment scripts,
+        not for driving the env inside a training loop.
+        """
+        if not hasattr(self._transition_model, "step_with_pert_vector"):
+            raise NotImplementedError(
+                f"transition_model={self.cfg.transition_model!r} has no step_with_pert_vector "
+                "-- step_vector() is only supported for transition_model='state'"
+            )
+        next_state = self._transition_model.step_with_pert_vector(self._cell_state, pert_vec)
+        return self._advance(next_state)
+
+    def multi_hot(self, drug_indices):
+        """
+        Build a multi-hot perturbation vector selecting multiple drugs from
+        self.drug_list at once -- e.g.
+        env.step_vector(env.multi_hot([12, 47])) applies drugs 12 and 47
+        simultaneously (their one-hot pert vectors summed). Feed the result to
+        step_vector(), not step() (which only accepts a single int index).
+        """
+        pert_matrix = getattr(self._transition_model, "pert_matrix", None)
+        if pert_matrix is None:
+            raise NotImplementedError(
+                f"transition_model={self.cfg.transition_model!r} has no pert_matrix -- "
+                "multi_hot() is only supported for transition_model='state'"
+            )
+        return pert_matrix[list(drug_indices)].sum(dim=0)
