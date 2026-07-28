@@ -185,3 +185,68 @@ variation the model compresses away. Runtime 3m00s.
 
 Next: unchanged — single-step with blended perturbations, or a model trained on
 sequential/combination data.
+
+## 2026-07-28 — pluggable reward functions; order_additivity's own gain metrics agree with the 07-27 basal_control_sweep
+
+Run: `python src/relearn/experiments/order_additivity.py --drug-a palbociclib --drug-b venetoclax --dose 0.5 --n-cells 256 --seed 0` (`--reward-fn ucell`, the default, and again with `--reward-fn edistance_from_control --reward-seed 0`)
+| Data: `artifacts/order_additivity_{arms,comparisons,vectors}_palbociclib_venetoclax_0.5uM*.{csv,npz}`
+
+Hypothesis: two changes at once. (1) The env's reward was hardcoded to per-cell
+UCell-vs-apoptosis-signature scoring; add a swappable `RewardFunction` interface
+(`src/relearn/rewards.py`, `cfg.reward_fn`) so E-distance-from-control (or
+anything else) can be swapped in without touching `RelearnChemicalEnv`. (2) Once
+swappable, check whether `order_additivity.py`'s two-hop arms — which feed
+STATE's own predicted intermediate state into the second forward pass — show
+the same basal-insensitivity the 07-27 `basal_control_sweep.py` entry measured
+deliberately, as a way to confirm this newer set-based (`S=256` real cell-sentence)
+harness agrees with the older one rather than silently diverging.
+
+Result: **order/additivity conclusions are reward-fn-independent** — cosine and
+rel_residual are computed on raw displacement vectors, never through
+`env._score()`, so switching `--reward-fn` only changes the `score` column, not
+the order/additivity/gain verdicts. Confirms `A→B` vs `B→A` is still 0.75× the
+drift floor (not distinguishable), and `co_mean`/`A→B` are still additive within
+drift, as in the earlier `order_additivity.py` entries.
+
+E-distance *does* surface a different story than UCell for the co-dose arms.
+UCell scores clustered tightly (0.53–0.60 baseline-to-drug), giving little
+dynamic range; E-distance from a fixed real-DMSO reference cloud gives a clean
+floor (baseline ≈ 0, DMSO no-ops ≈ 0.10) with every real arm well clear of it
+(0.19–0.27):
+
+    arm       A      B    A→B    B→A   co_mean  co_sum
+    edist  0.223  0.207  0.205  0.227    0.193   0.267
+
+`co_sum` (literal two-hot, double magnitude) sits farthest from control;
+`co_mean` sits *closer to control than either single drug alone* — UCell had
+called `co_mean` flat/indistinguishable from baseline, but the population does
+shift, just less than either endpoint. Consistent with `pert_encoder` being a
+single `Linear` averaging two embeddings into a smaller net displacement, not
+literally interpolating "between" them.
+
+New gain metrics (`input_change_x_floor` / `output_change_x_floor` /
+`gain_out_per_in`, same split-half-floor normalization as `basal_control_sweep.py`,
+computed by comparing each two-hop arm to its single-hop counterpart with the
+same final action, e.g. `A_then_B` vs `B`) **agree with the 07-27 result**:
+
+    arm             in x floor   out x floor    gain
+    A_then_B            1.90          1.04     0.547
+    B_then_A            1.77          1.07     0.606
+    DMSO_then_A          0.82          1.01     1.224
+    DMSO_then_B          0.82          1.01     1.226
+
+A real, sizeable substituted-basal change (~1.8–1.9× floor, comparable to the
+`palbo_lo`/`veneto` conditions' 2.1–2.5× in the 07-27 sweep) produces an output
+change barely above floor (~1.04–1.07×) — gain 0.55–0.61, same sublinear regime
+as 07-27's 0.22–0.49 (not identical numbers, different experimental design —
+one perturbation-fixed/basal-varying, one basal-fixed/perturbation-varying —
+but the same qualitative "real biological substitution gets attenuated to near
+noise" conclusion). The two independently-built harnesses agree.
+
+Next: E-distance's better dynamic range makes it the more promising reward for
+RL training than UCell (which the 2026-07-15 oracle sweep already showed
+clusters everything near 0.62 — E-distance's clean floor may resolve that);
+try it in an actual training run. Also worth running the gain-metric extension
+on the `Gemcitabine+Paclitaxel` / `Dabrafenib+Trametinib` pairs (the two
+EmeraldBay-representable combos) once that validation track resumes.
+

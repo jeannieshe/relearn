@@ -66,7 +66,20 @@ class EnvConfig:
     msigdb_gene_set: str = "HALLMARK_APOPTOSIS"
     gmt_path: str = "data/HALLMARK_APOPTOSIS.v2026.1.Hs.gmt"
 
-    # termination criterion
+    # reward function: which scoring strategy computes the potential-based
+    # reward signal (see src/relearn/rewards.py). "ucell" is the original
+    # per-cell UCell-vs-signature scorer (decoded gene space); "edistance_from_control"
+    # scores distributional distance from a fresh draw of env's real DMSO
+    # control pool, in embed_key (latent) space -- swappable without
+    # touching RelearnChemicalEnv.
+    reward_fn: str = "ucell"
+    reward_reference_n_cells: int = 256  # only used by edistance_from_control
+    reward_seed: int | None = None  # only used by edistance_from_control, see rewards.py
+
+    # termination criterion (interpreted by the configured reward_fn's
+    # goal_reached() -- e.g. UCellApoptosisReward treats this as a tolerance
+    # window around its [0, 1] scale's goal of 1.0; other reward functions
+    # may ignore it entirely, see rewards.py)
     termination_epsilon: float = 0.1
 
     # episode horizon: max number of perturbations the agent may apply before

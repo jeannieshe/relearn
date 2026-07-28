@@ -9,6 +9,7 @@ import h5py
 from pathlib import Path
 from relearn.config import EnvConfig
 from relearn.transitions import build_transition_model
+from relearn.rewards import build_reward_fn
 from relearn.utils import ucell_score, _load_gmt_signature
 
 class RelearnChemicalEnv(gym.Env):
@@ -64,14 +65,25 @@ class RelearnChemicalEnv(gym.Env):
         # STATE's 2000-HVG gene panel, in the exact column order of obsm/X_hvg
         self.hvg_gene_names = np.load(self.hvg_gene_names_path, allow_pickle=True).astype(str)
 
-        # define the apoptosis classifier
+        # define the apoptosis classifier (only used by reward_fn="ucell")
         self.sig_genes = _load_gmt_signature(cfg.gmt_path, self.msigdb_gene_set)
         self.apoptosis_predictor = ucell_score
 
-        # when the observation is an embedding (not raw HVGs), the reward is scored
-        # on gene expression decoded from that embedding, so the transition model
-        # must carry a gene_decoder. Fail fast here rather than at the first step().
-        if not self._output_is_gene_space and getattr(self._transition_model, "gene_decoder", None) is None:
+        # the reward function: which scoring strategy computes the shaped
+        # reward, selected via cfg.reward_fn ("ucell" or
+        # "edistance_from_control") -- see rewards.py
+        self._reward_fn = build_reward_fn(cfg)
+
+        # only reward_fn="ucell" needs decoded gene space (it scores against
+        # a gene-symbol signature); "edistance_from_control" compares clouds
+        # directly in embed_key/latent space, no decode involved. So the
+        # gene_decoder requirement below only applies to "ucell" -- fail fast
+        # here rather than at the first step().
+        if (
+            cfg.reward_fn == "ucell"
+            and not self._output_is_gene_space
+            and getattr(self._transition_model, "gene_decoder", None) is None
+        ):
             raise ValueError(
                 f"embed_key={self.embed_key!r} is an embedding space, so the reward "
                 "needs a gene_decoder to map it back to the 2000-HVG panel, but "
@@ -171,18 +183,15 @@ class RelearnChemicalEnv(gym.Env):
             return cell_state
         return self._transition_model.decode_to_genes(cell_state)  # type: ignore[attr-defined]
 
-    def _score_apoptosis(self, cell_state: np.ndarray) -> float:
-        """Apoptosis reward for a set of cell states: decode to gene space if
-        needed, UCell-score every cell against the signature on STATE's
-        2000-HVG panel order, then average the per-cell scores into the single
-        scalar step()/reset() use for reward shaping and termination."""
-        expr = self._to_gene_expression(cell_state)
-        scores = self.apoptosis_predictor(expr, gene_names=self.hvg_gene_names, signature_genes=self.sig_genes)
-        return float(np.mean(scores))
+    def _score(self, cell_state: np.ndarray) -> float:
+        """Score a set of cell states with whatever reward function cfg.reward_fn
+        selects (see rewards.py) -- the single scalar step()/reset() use for
+        reward shaping and termination."""
+        return self._reward_fn(self, cell_state)
 
     def _get_info(self):
         return {
-            "apoptosis score": self._score_apoptosis(self._cell_state),
+            "score": self._score(self._cell_state),
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -200,7 +209,7 @@ class RelearnChemicalEnv(gym.Env):
         # default: replay the same starting set every episode
         self._cell_state = self._initial_cell_set
         self._step_count = 0
-        self._current_score = self._score_apoptosis(self._cell_state)
+        self._current_score = self._score(self._cell_state)
 
         observation = self._get_obs()
         info = self._get_info()
@@ -215,9 +224,8 @@ class RelearnChemicalEnv(gym.Env):
         an arbitrary (e.g. multi-hot combination) perturbation vector go
         through identical accounting.
         """
-        # score the state -- decodes the embedding to the 2000-HVG panel first
-        # when the observation isn't already raw HVGs (see _to_gene_expression)
-        new_score = self._score_apoptosis(next_state)
+        # score the state with whatever reward function is configured
+        new_score = self._score(next_state)
 
         # make progress the signal instead of raw reward
         # potential based shaping looks like reward_t = score(s_t) - score(s_{t_1})
@@ -231,11 +239,13 @@ class RelearnChemicalEnv(gym.Env):
         self._step_count += 1
 
         # check termination, truncation criteria
-        # terminated: reached the apoptosis goal (score ~= 1) -- a real end state,
-        #   so the agent bootstraps no future value past it.
+        # terminated: the configured reward function's own goal_reached() --
+        #   a real end state, so the agent bootstraps no future value past it.
+        #   (e.g. UCellApoptosisReward: score within termination_epsilon of 1.0;
+        #   EDistanceFromControlReward: never -- see rewards.py)
         # truncated: hit the horizon without reaching the goal -- an artificial
         #   cutoff, so the agent should still bootstrap the next state's value.
-        terminated = abs(1 - new_score) <= self.termination_epsilon
+        terminated = self._reward_fn.goal_reached(new_score)
         truncated = self._step_count >= self.horizon
 
         # calculate reward
