@@ -16,3 +16,5 @@ outputs/*
 runs/*
 **/__pycache__/*
 **/__marimo__/*
+artifacts/*.json
+artifacts/*.npz
