@@ -47,17 +47,18 @@ class StateTransitionModel:
         """
         drug_name = self.drug_list[action]
         pert_vec = self.pert_map[drug_name].float()  # shape: (1138,)
+        S = cell_state.shape[0]
 
         batch = {
-            "ctrl_cell_emb": torch.tensor(cell_state, dtype=torch.float32, device=self._device).unsqueeze(0),
-            "pert_emb": pert_vec.unsqueeze(0).to(self._device),
-            "pert_name": [str(drug_name)],
+            "ctrl_cell_emb": torch.tensor(cell_state, dtype=torch.float32, device=self._device),
+            "pert_emb": pert_vec.unsqueeze(0).repeat(S, 1).to(self._device),
+            "pert_name": [str(drug_name)] * S,
         }
 
         with torch.no_grad():
-            pred = self._model.forward(batch, padded=False)  # [1, cell_representation_dim]
+            pred = self._model.forward(batch, padded=False)  # [S, cell_representation_dim]
 
-        return pred.squeeze(0).cpu().numpy()  # [cell_representation_dim]
+        return pred.reshape(S, -1).cpu().numpy()  # [S, cell_representation_dim]
 
     def step_with_pert_vector(self, cell_state: np.ndarray, pert_vec: torch.Tensor) -> np.ndarray:
         """
@@ -72,21 +73,23 @@ class StateTransitionModel:
         The model has no learned representation of drug combinations; whatever
         non-additivity shows up downstream comes from the transformer and decoder.
         """
+        S = cell_state.shape[0]
         batch = {
-            "ctrl_cell_emb": torch.tensor(cell_state, dtype=torch.float32, device=self._device).unsqueeze(0),
-            "pert_emb": pert_vec.float().unsqueeze(0).to(self._device),
-            "pert_name": ["<combination>"],
+            "ctrl_cell_emb": torch.tensor(cell_state, dtype=torch.float32, device=self._device),
+            "pert_emb": pert_vec.float().unsqueeze(0).repeat(S, 1).to(self._device),
+            "pert_name": ["<combination>"] * S,
         }
         with torch.no_grad():
             pred = self._model.forward(batch, padded=False)
-        return pred.squeeze(0).cpu().numpy()
+        return pred.reshape(S, -1).cpu().numpy()
 
     def decode_to_genes(self, cell_state: np.ndarray) -> np.ndarray:
-        """Decode an embed_key latent (e.g. X_state) back to the 2000-HVG gene
-        panel via this checkpoint's gene_decoder (see EnvConfig.embed_key)."""
+        """Decode a set of embed_key latents (e.g. X_state) back to the 2000-HVG
+        gene panel via this checkpoint's gene_decoder (see EnvConfig.embed_key).
+        cell_state has shape [S, latent_dim]; returns [S, 2000]."""
         if self.gene_decoder is None:
             raise ValueError("this checkpoint has no gene_decoder to decode with")
         with torch.no_grad():
             latent = torch.as_tensor(cell_state, dtype=torch.float32, device=self._device)
-            genes = self.gene_decoder(latent.unsqueeze(0))  # [1, 2000]
-        return genes.squeeze(0).cpu().numpy()
+            genes = self.gene_decoder(latent)  # [S, 2000]
+        return genes.cpu().numpy()

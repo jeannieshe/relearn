@@ -47,6 +47,7 @@ import numpy as np
 import torch
 
 from relearn.config import EnvConfig
+from relearn.rewards import energy_distance
 from relearn.transitions.state_model import StateTransitionModel
 from relearn.utils import _load_gmt_signature, ucell_score
 
@@ -124,20 +125,8 @@ def predict(tm: StateTransitionModel, basal: np.ndarray, pert_vec: torch.Tensor)
 # --------------------------------------------------------------------------
 # distribution-level metrics
 # --------------------------------------------------------------------------
-
-def _mean_pairwise_dist(X: np.ndarray, Y: np.ndarray) -> float:
-    d2 = (X**2).sum(1)[:, None] + (Y**2).sum(1)[None, :] - 2.0 * (X @ Y.T)
-    return float(np.sqrt(np.maximum(d2, 0)).mean())
-
-
-def energy_distance(X: np.ndarray, Y: np.ndarray) -> float:
-    """
-    2*E||x-y|| - E||x-x'|| - E||y-y'||. Zero iff the two populations share a
-    distribution, so unlike a mean-vs-mean comparison it also sees differences
-    in spread -- which matters because STATE's predictions are known to be
-    smoother than real cells.
-    """
-    return float(2 * _mean_pairwise_dist(X, Y) - _mean_pairwise_dist(X, X) - _mean_pairwise_dist(Y, Y))
+# energy_distance() moved to relearn.rewards (imported above) so
+# EDistanceFromControlReward and this script share one implementation.
 
 
 def cos(u: np.ndarray, v: np.ndarray) -> float:

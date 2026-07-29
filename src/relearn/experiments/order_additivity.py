@@ -34,6 +34,35 @@ as a normalized residual on displacements and used as a reference scale.
 Run with:
     python src/relearn/experiments/order_additivity.py \
         --drug-a palbociclib --drug-b venetoclax --dose 0.5
+
+The per-arm "score" column is whatever cfg.reward_fn computes (see
+rewards.py) -- default "ucell" (mean per-cell UCell-vs-apoptosis-signature
+score); pass --reward-fn edistance_from_control to report E-distance from a
+fixed real-DMSO reference cloud instead:
+    python src/relearn/experiments/order_additivity.py \
+        --drug-a palbociclib --drug-b venetoclax --dose 0.5 \
+        --reward-fn edistance_from_control --reward-seed 0
+Unlike the displacement/cosine/additivity analysis (which is always computed
+on pseudobulk, mean-over-cells vectors -- see run_arms()), the score column
+is computed on each arm's FULL predicted cell-state set, since a
+distributional metric like E-distance needs a real cloud on each side, not
+a single already-averaged point.
+
+GAIN METRICS (input_change_x_floor / output_change_x_floor / gain_out_per_in),
+same definitions as basal_control_sweep.py: every two-hop arm here (A_then_B,
+B_then_A, ...) feeds STATE's own predicted intermediate state into the second
+forward pass instead of a real cell measurement -- exactly the basal
+substitution basal_control_sweep.py sweeps deliberately, arising here as a
+side effect of chaining two passes. Each two-hop arm is compared against its
+single-hop counterpart with the same final action (A_then_B vs B, DMSO_then_A
+vs A, ...): input_change_x_floor is how far the substituted basal (the
+predicted intermediate state) sits from a real DMSO draw, and
+output_change_x_floor is how far the resulting output sits from that
+counterpart's output -- both normalized by a real split-half floor (an
+independent second real DMSO draw, run through the same final action).
+Single-hop arms (A, B, DMSO, co_mean, co_sum) have no basal substitution to
+measure, so these columns are NaN for them, matching how basal_control_sweep.py
+never reports a self-vs-self row for its own reference condition either.
 """
 
 import argparse
@@ -42,10 +71,10 @@ import json
 from pathlib import Path
 
 import numpy as np
-import torch
 
 from relearn.config import EnvConfig
 from relearn.envs.small_molecules import RelearnChemicalEnv
+from relearn.rewards import energy_distance
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 OUT_DIR = REPO_ROOT / "artifacts"
@@ -96,23 +125,43 @@ def run_arms(env: RelearnChemicalEnv, key_a, key_b, dmso_key):
     idx_b = env.drug_list.index(key_b)
     idx_dmso = env.drug_list.index(dmso_key)
 
-    x0_state = env.initial_cell_state
-    x0 = np.asarray(env._to_gene_expression(x0_state), dtype=np.float64)
+    # the real num_cells-sized starting set (shape [S, D]) -- not a single
+    # averaged vector. Each arm below runs the full set through STATE (which
+    # attends across the S cells together, see state_model.py) and returns
+    # the full predicted [S, D] gene-space set; pseudobulking (mean over
+    # cells) happens below, separately for the displacement analysis.
+    x0_state = env._initial_cell_set
+    x0_full = np.asarray(env._to_gene_expression(x0_state), dtype=np.float64)
+    x0 = x0_full.mean(axis=0)
 
     def seq(*action_idxs):
-        """Apply actions in order from the fixed baseline; return final gene-space expr."""
+        """
+        Apply actions in order from the fixed baseline. Returns
+        (raw_state_fed_into_the_last_action, full_[S,D]_gene_expr_after_it) --
+        the raw (un-decoded, embed_key-space) state before the last action is
+        exactly the "basal" that a real measurement would occupy for a
+        single-hop arm sharing the same final action; see the module
+        docstring's GAIN METRICS note.
+        """
         s = x0_state
-        for a in action_idxs:
+        for a in action_idxs[:-1]:
             s = tm.step(s, a)
-        return np.asarray(env._to_gene_expression(s), dtype=np.float64)
+        raw_before_last = s
+        s = tm.step(s, action_idxs[-1])
+        return raw_before_last, np.asarray(env._to_gene_expression(s), dtype=np.float64)
 
     def combo(weight: float):
-        """One step with a combined perturbation vector: weight*(onehot_A + onehot_B)."""
-        pv = weight * (tm.pert_map[key_a].float() + tm.pert_map[key_b].float())
-        s = tm.step_with_pert_vector(x0_state, pv)
-        return np.asarray(env._to_gene_expression(s), dtype=np.float64)
+        """One step with a combined perturbation vector: weight*(onehot_A + onehot_B).
+        Returns (x0_state, full_[S,D]_gene_expr) -- always single-hop, so the
+        "before" state is just x0_state itself (see reference_output_key below,
+        combo arms are their own reference and this is never actually used)."""
+        pv = weight * (tm.pert_map[key_a].float() + tm.pert_map[key_b].float())  # type: ignore[attr-defined]
+        s = tm.step_with_pert_vector(x0_state, pv)  # type: ignore[attr-defined]
+        return x0_state, np.asarray(env._to_gene_expression(s), dtype=np.float64)
 
-    arms = {
+    raw_before: dict[str, np.ndarray] = {}
+    arms_full: dict[str, np.ndarray] = {}
+    for key, (before, full) in {
         # singles -- the building blocks of the additive null
         "A": seq(idx_a),
         "B": seq(idx_b),
@@ -130,20 +179,86 @@ def run_arms(env: RelearnChemicalEnv, key_a, key_b, dmso_key):
         "DMSO_then_B": seq(idx_dmso, idx_b),
         "DMSO": seq(idx_dmso),
         "DMSO_then_DMSO": seq(idx_dmso, idx_dmso),
-    }
+    }.items():
+        raw_before[key], arms_full[key] = before, full
+
+    # pseudobulk (mean over cells) per arm -- what the displacement / cosine /
+    # additivity analysis below operates on, since those need single vectors.
+    arms = {k: full.mean(axis=0) for k, full in arms_full.items()}
 
     # displacements from the shared baseline
     V = {k: expr - x0 for k, expr in arms.items()}
     V["additive"] = V["A"] + V["B"]
 
-    scores = {
-        k: float(env.apoptosis_predictor(expr, gene_names=env.hvg_gene_names, signature_genes=env.sig_genes))
-        for k, expr in arms.items()
+    # scores go through whatever reward function cfg.reward_fn selects (see
+    # rewards.py), on each arm's FULL predicted cell set -- not the
+    # pseudobulk mean, since a distributional metric like E-distance needs a
+    # real cloud on each side (collapsing to one point would silently zero
+    # out that arm's own spread and stop measuring anything meaningful).
+    scores = {k: env._score(full) for k, full in arms_full.items()}
+    scores["baseline"] = env._score(x0_full)
+
+    # ---- GAIN METRICS (basal_control_sweep.py-style) ----
+    # each two-hop arm's single-hop counterpart with the same final action --
+    # e.g. A_then_B's "real basal, same final action" comparison point is B.
+    # Single-hop arms map to themselves (no substitution occurred).
+    reference_output_key = {
+        "A": "A", "B": "B", "A_then_B": "B", "B_then_A": "A",
+        "co_mean": "co_mean", "co_sum": "co_sum",
+        "A_then_DMSO": "DMSO", "B_then_DMSO": "DMSO",
+        "DMSO_then_A": "A", "DMSO_then_B": "B",
+        "DMSO": "DMSO", "DMSO_then_DMSO": "DMSO",
     }
-    scores["baseline"] = float(
-        env.apoptosis_predictor(x0, gene_names=env.hvg_gene_names, signature_genes=env.sig_genes)
+
+    # split-half floor: an independent second real DMSO draw from the same
+    # pool env's own starting set came from (see _load_dmso_control_pool()).
+    x0_state_b = env._draw_cell_set()
+    floor_in = energy_distance(
+        np.asarray(x0_state_b, dtype=np.float64), np.asarray(x0_state, dtype=np.float64)
     )
-    return V, scores
+
+    # output floor per unique reference arm: apply that SAME final action to
+    # x0_state_b instead of x0_state, and compare to the (already-computed)
+    # real-basal output -- the noise floor for "how much does this
+    # perturbation's predicted output move, given only real sampling noise
+    # on the input side."
+    floor_out: dict[str, float] = {}
+    for ref_key in set(reference_output_key.values()):
+        if ref_key in ("co_mean", "co_sum"):
+            weight = 0.5 if ref_key == "co_mean" else 1.0
+            pv = weight * (tm.pert_map[key_a].float() + tm.pert_map[key_b].float())  # type: ignore[attr-defined]
+            s_b = tm.step_with_pert_vector(x0_state_b, pv)  # type: ignore[attr-defined]
+        else:
+            idx = {"A": idx_a, "B": idx_b, "DMSO": idx_dmso}[ref_key]
+            s_b = tm.step(x0_state_b, idx)
+        out_b = np.asarray(env._to_gene_expression(s_b), dtype=np.float64)
+        floor_out[ref_key] = energy_distance(out_b, arms_full[ref_key])
+
+    gain = {}
+    for k in arms_full:
+        ref_key = reference_output_key[k]
+        cos_ref = cos(V[k], V[ref_key])
+        if k == ref_key:
+            # single-hop arm -- it IS the reference, no basal was substituted
+            gain[k] = {"input_change_x_floor": float("nan"), "output_change_x_floor": float("nan"),
+                       "gain_out_per_in": float("nan"), "cos_vs_reference_output": cos_ref}
+            continue
+        in_dist = energy_distance(
+            np.asarray(raw_before[k], dtype=np.float64), np.asarray(x0_state, dtype=np.float64)
+        )
+        in_x = in_dist / floor_in if floor_in > 0 else float("nan")
+        out_dist = energy_distance(arms_full[k], arms_full[ref_key])
+        out_x = out_dist / floor_out[ref_key] if floor_out[ref_key] > 0 else float("nan")
+        gain[k] = {
+            "input_change_x_floor": in_x,
+            "output_change_x_floor": out_x,
+            "gain_out_per_in": out_x / in_x if in_x and in_x > 0 else float("nan"),
+            "cos_vs_reference_output": cos_ref,
+        }
+    gain["additive"] = {"input_change_x_floor": float("nan"), "output_change_x_floor": float("nan"),
+                         "gain_out_per_in": float("nan"), "cos_vs_reference_output": float("nan")}
+
+    return V, scores, gain
 
 
 COMPARISONS = [
@@ -170,26 +285,47 @@ def main():
     ap.add_argument("--drug-a", default="palbociclib")
     ap.add_argument("--drug-b", default="venetoclax")
     ap.add_argument("--dose", type=float, default=0.5, help="concentration in uM for both drugs")
+    ap.add_argument("--n-cells", type=int, default=256,
+                    help="size of the real starting cell-sentence (matches the checkpoint's "
+                         "trained cell_sentence_len; S=1 is uninformative -- see the "
+                         "2026-07-25 EXPERIMENTS.md entry, single cells are 96%% zeros)")
+    ap.add_argument("--seed", type=int, default=None, help="seed for which real DMSO cells are drawn")
+    ap.add_argument("--reward-fn", default="ucell", choices=["ucell", "edistance_from_control"],
+                    help="scoring strategy reported per arm (see rewards.py); edistance_from_control "
+                         "measures each arm's full predicted cell cloud against one fixed reference "
+                         "draw from the real DMSO control pool, instead of the UCell apoptosis score")
+    ap.add_argument("--reward-reference-n-cells", type=int, default=256,
+                    help="reference cloud size, only used by --reward-fn edistance_from_control")
+    ap.add_argument("--reward-seed", type=int, default=None,
+                    help="seed for which reference cells edistance_from_control draws -- fixed for "
+                         "the whole run so every arm is compared against the same reference cloud")
     ap.add_argument("--tag", default=None, help="output filename suffix (default: <a>_<b>_<dose>uM)")
     args = ap.parse_args()
 
-    env = RelearnChemicalEnv(EnvConfig(horizon=2))
+    env = RelearnChemicalEnv(
+        EnvConfig(
+            horizon=2, num_cells=args.n_cells, reward_fn=args.reward_fn,
+            reward_reference_n_cells=args.reward_reference_n_cells, reward_seed=args.reward_seed,
+        ),
+        seed=args.seed,
+    )
     key_a = resolve_drug(env, args.drug_a, args.dose)
     key_b = resolve_drug(env, args.drug_b, args.dose)
     dmso_key = env.cfg.dmso_control_pert
 
     print(f"A = {key_a}\nB = {key_b}\nDMSO = {dmso_key}\n")
 
-    V, scores = run_arms(env, key_a, key_b, dmso_key)
+    V, scores, gain = run_arms(env, key_a, key_b, dmso_key)
 
     # per-arm summary
     arm_rows = [
         {
             "arm": k,
             "displacement_norm": float(np.linalg.norm(v)),
-            "ucell_score": scores.get(k, float("nan")),
+            "score": scores.get(k, float("nan")),
             "cos_to_A": cos(v, V["A"]),
             "cos_to_B": cos(v, V["B"]),
+            **gain[k],
         }
         for k, v in V.items()
     ]
@@ -206,7 +342,10 @@ def main():
         for label, l, r, group in COMPARISONS
     ]
 
-    tag = args.tag or f"{args.drug_a}_{args.drug_b}_{args.dose}uM".replace(" ", "")
+    tag = args.tag or (
+        f"{args.drug_a}_{args.drug_b}_{args.dose}uM".replace(" ", "")
+        + ("" if args.reward_fn == "ucell" else f"_{args.reward_fn}")
+    )
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUT_DIR / f"order_additivity_arms_{tag}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(arm_rows[0].keys()))
@@ -223,11 +362,22 @@ def main():
     )
 
     # ---- report ----
-    print(f"baseline UCell = {scores['baseline']:.4f}\n")
-    print(f"{'arm':<18}{'|v|':>10}{'UCell':>10}{'cos->A':>10}{'cos->B':>10}")
+    print(f"baseline score ({args.reward_fn}) = {scores['baseline']:.4f}\n")
+    print(f"{'arm':<18}{'|v|':>10}{'score':>10}{'cos->A':>10}{'cos->B':>10}"
+          f"{'in x floor':>12}{'out x floor':>13}{'gain':>8}")
     for r in arm_rows:
-        print(f"{r['arm']:<18}{r['displacement_norm']:>10.4f}{r['ucell_score']:>10.4f}"
-              f"{r['cos_to_A']:>10.4f}{r['cos_to_B']:>10.4f}")
+        print(f"{r['arm']:<18}{r['displacement_norm']:>10.4f}{r['score']:>10.4f}"
+              f"{r['cos_to_A']:>10.4f}{r['cos_to_B']:>10.4f}"
+              f"{r['input_change_x_floor']:>12.4f}{r['output_change_x_floor']:>13.4f}"
+              f"{r['gain_out_per_in']:>8.3f}")
+
+    print("\n(in/out x floor and gain are basal_control_sweep.py-style GAIN metrics -- NaN for "
+          "single-hop arms A/B/DMSO/co_mean/co_sum, which have no substituted basal to measure. "
+          "For two-hop arms, 'in x floor' is how far STATE's own predicted intermediate state "
+          "sits from a real DMSO draw, and 'out x floor' is how far the resulting output sits "
+          "from the single-hop counterpart with the same final action -- both in units of a real "
+          "split-half noise floor. gain = out / in: >1 means the model amplifies the basal "
+          "substitution past what real sampling noise alone would produce.)")
 
     print(f"\n{'comparison':<24}{'cosine':>10}{'rel_resid':>12}   group")
     for r in cmp_rows:
