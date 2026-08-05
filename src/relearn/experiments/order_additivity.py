@@ -63,6 +63,19 @@ independent second real DMSO draw, run through the same final action).
 Single-hop arms (A, B, DMSO, co_mean, co_sum) have no basal substitution to
 measure, so these columns are NaN for them, matching how basal_control_sweep.py
 never reports a self-vs-self row for its own reference condition either.
+
+REAL-BASAL ARMS (realA_to_B / realB_to_A): the two-hop A_then_B/B_then_A arms
+feed STATE's own predicted intermediate state into the second forward pass --
+real_basal_order.py's whole premise is that this is a poor basal (dense ReLU
+output, nothing like a real cell). realA_to_B/realB_to_A instead use Tahoe's
+REAL measured drug-A-treated (or B-treated) SW480 cells directly as the
+starting basal, then do exactly ONE hop applying the other drug -- reusing
+real_basal_order.py's own pool-loading helpers (find_cell_line_file,
+load_pools, resolve_label) rather than duplicating them, the same way
+basal_control_sweep.py already does. Their GAIN-metric reference is the same
+as the predicted arms' (realA_to_B vs B, realB_to_A vs A), so this is directly
+comparable to A_then_B/B_then_A's own gain numbers -- real basal vs. predicted
+basal, same final action, same floor.
 """
 
 import argparse
@@ -70,10 +83,12 @@ import csv
 import json
 from pathlib import Path
 
+import h5py
 import numpy as np
 
 from relearn.config import EnvConfig
 from relearn.envs.small_molecules import RelearnChemicalEnv
+from relearn.experiments.real_basal_order import find_cell_line_file, load_pools, resolve_label
 from relearn.rewards import energy_distance
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
@@ -109,10 +124,16 @@ def rel_residual(u: np.ndarray, v: np.ndarray) -> float:
     return float(np.linalg.norm(u - v) / scale) if scale > 0 else float("nan")
 
 
-def run_arms(env: RelearnChemicalEnv, key_a, key_b, dmso_key):
+def run_arms(env: RelearnChemicalEnv, key_a, key_b, dmso_key, real_pools=None, real_label_a=None, real_label_b=None):
     """
     Every arm the comparison needs. Each is an independent rollout from the same
     fixed baseline, so nothing leaks between arms.
+
+    real_pools/real_label_a/real_label_b (optional): real measured cell pools
+    from real_basal_order.py's load_pools(), keyed by real_label_a/real_label_b
+    (the h5ad's own drugname_drugconc strings, NOT env.drug_list's key_a/key_b
+    format -- see main()). When given, adds realA_to_B/realB_to_A arms; when
+    None, those arms are skipped.
     """
     tm = env._transition_model
     if not hasattr(tm, "step_with_pert_vector"):
@@ -182,6 +203,20 @@ def run_arms(env: RelearnChemicalEnv, key_a, key_b, dmso_key):
     }.items():
         raw_before[key], arms_full[key] = before, full
 
+    if real_pools is not None:
+        # real Tahoe-measured drug-treated cells as basal, ONE hop applying
+        # the other drug -- see module docstring's REAL-BASAL ARMS note.
+        def draw_real(pool):
+            idx = env.rng.choice(len(pool), size=env.num_cells, replace=len(pool) < env.num_cells)
+            return pool[idx].astype(np.float32)
+
+        real_a_basal = draw_real(real_pools[real_label_a])
+        real_b_basal = draw_real(real_pools[real_label_b])
+        raw_before["realA_to_B"] = real_a_basal
+        arms_full["realA_to_B"] = np.asarray(env._to_gene_expression(tm.step(real_a_basal, idx_b)), dtype=np.float64)
+        raw_before["realB_to_A"] = real_b_basal
+        arms_full["realB_to_A"] = np.asarray(env._to_gene_expression(tm.step(real_b_basal, idx_a)), dtype=np.float64)
+
     # pseudobulk (mean over cells) per arm -- what the displacement / cosine /
     # additivity analysis below operates on, since those need single vectors.
     arms = {k: full.mean(axis=0) for k, full in arms_full.items()}
@@ -209,6 +244,10 @@ def run_arms(env: RelearnChemicalEnv, key_a, key_b, dmso_key):
         "DMSO_then_A": "A", "DMSO_then_B": "B",
         "DMSO": "DMSO", "DMSO_then_DMSO": "DMSO",
     }
+    if real_pools is not None:
+        # same final action as A_then_B/B_then_A -- directly comparable gain
+        reference_output_key["realA_to_B"] = "B"
+        reference_output_key["realB_to_A"] = "A"
 
     # split-half floor: an independent second real DMSO draw from the same
     # pool env's own starting set came from (see _load_dmso_control_pool()).
@@ -277,6 +316,12 @@ COMPARISONS = [
     ("co_mean vs B->A", "co_mean", "B_then_A", "co_vs_seq"),
     ("co_sum vs co_mean", "co_sum", "co_mean", "co_vs_seq"),
     ("A vs B", "A", "B", "reference"),
+    # real-basal arms -- only present when run_arms() was given real_pools
+    ("realA->B vs B", "realA_to_B", "B", "real_basal_sensitivity"),
+    ("realB->A vs A", "realB_to_A", "A", "real_basal_sensitivity"),
+    ("realA->B vs realB->A", "realA_to_B", "realB_to_A", "order_real_basal"),
+    ("realA->B vs additive", "realA_to_B", "additive", "additivity_real_basal"),
+    ("realB->A vs additive", "realB_to_A", "additive", "additivity_real_basal"),
 ]
 
 
@@ -299,6 +344,8 @@ def main():
     ap.add_argument("--reward-seed", type=int, default=None,
                     help="seed for which reference cells edistance_from_control draws -- fixed for "
                          "the whole run so every arm is compared against the same reference cloud")
+    ap.add_argument("--max-cells", type=int, default=20000,
+                    help="cap on real drug-treated cells loaded per drug for the realA_to_B/realB_to_A arms")
     ap.add_argument("--tag", default=None, help="output filename suffix (default: <a>_<b>_<dose>uM)")
     args = ap.parse_args()
 
@@ -313,9 +360,22 @@ def main():
     key_b = resolve_drug(env, args.drug_b, args.dose)
     dmso_key = env.cfg.dmso_control_pert
 
+    # real Tahoe-measured cells for the realA_to_B/realB_to_A arms -- NOT the
+    # same string format as key_a/key_b (those are env.drug_list/pert_map
+    # keys); real_label_a/real_label_b are the h5ad's own drugname_drugconc
+    # categories, resolved the same way real_basal_order.py does it.
+    h5_path = find_cell_line_file(env.tahoe_se_dir, env.cell_type_accession_number)
+    with h5py.File(h5_path, "r") as f:
+        cats = [c.decode() if isinstance(c, bytes) else c for c in f["obs"]["drugname_drugconc"]["categories"][:]]
+    real_label_a = resolve_label(cats, args.drug_a, args.dose)
+    real_label_b = resolve_label(cats, args.drug_b, args.dose)
+    real_pools = load_pools(h5_path, env.embed_key, [real_label_a, real_label_b], args.max_cells, env.rng)
+    print(f"real basal pools: {real_label_a} ({len(real_pools[real_label_a])} cells), "
+          f"{real_label_b} ({len(real_pools[real_label_b])} cells)")
+
     print(f"A = {key_a}\nB = {key_b}\nDMSO = {dmso_key}\n")
 
-    V, scores, gain = run_arms(env, key_a, key_b, dmso_key)
+    V, scores, gain = run_arms(env, key_a, key_b, dmso_key, real_pools, real_label_a, real_label_b)
 
     # per-arm summary
     arm_rows = [
@@ -398,6 +458,20 @@ def main():
         rr = r["rel_residual"] / floor if floor > 0 else float("inf")
         print(f"{label:<36} rel_resid = {r['rel_residual']:.4f}  ({rr:.2f}x floor)  "
               f"-> {'NON-ADDITIVE' if rr > 2 else 'additive within drift'}")
+
+    real_order = next(c for c in cmp_rows if c["comparison"] == "realA->B vs realB->A")
+    real_ratio = real_order["rel_residual"] / floor if floor > 0 else float("inf")
+    print(f"order effect, REAL basal (realA->B vs realB->A): rel_resid = {real_order['rel_residual']:.4f} "
+          f"(cos={real_order['cosine']:.4f})")
+    print(f"real order / floor ratio:            {real_ratio:.2f}x  ->  "
+          f"{'ORDER MATTERS' if real_ratio > 2 else 'NOT DISTINGUISHABLE FROM DRIFT'}")
+    for label in ("realA->B vs B", "realB->A vs A"):
+        r = next(c for c in cmp_rows if c["comparison"] == label)
+        rr = r["rel_residual"] / floor if floor > 0 else float("inf")
+        print(f"{label:<36} rel_resid = {r['rel_residual']:.4f}  ({rr:.2f}x floor)  "
+              f"-> {'REAL BASAL CHANGES PREDICTION' if rr > 2 else 'same as single-drug alone'} "
+              "(basal_sensitivity: does using the real drug-treated basal instead of real DMSO move "
+              "the output at all?)")
 
     # genes driving the order effect
     d = V["A_then_B"] - V["B_then_A"]

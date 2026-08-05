@@ -186,9 +186,9 @@ variation the model compresses away. Runtime 3m00s.
 Next: unchanged — single-step with blended perturbations, or a model trained on
 sequential/combination data.
 
-## 2026-07-28 — pluggable reward functions; order_additivity's own gain metrics agree with the 07-27 basal_control_sweep
+## 2026-07-28 — pluggable reward functions; order_additivity's own gain metrics agree with the 07-27 basal_control_sweep; real-basal arms close the "maybe it's just a bad predicted input" loophole
 
-Run: `python src/relearn/experiments/order_additivity.py --drug-a palbociclib --drug-b venetoclax --dose 0.5 --n-cells 256 --seed 0` (`--reward-fn ucell`, the default, and again with `--reward-fn edistance_from_control --reward-seed 0`)
+Run: `python src/relearn/experiments/order_additivity.py --drug-a palbociclib --drug-b venetoclax --dose 0.5 --n-cells 256 --seed 0` (`--reward-fn ucell`, the default, and again with `--reward-fn edistance_from_control --reward-seed 0`; the version below with `realA_to_B`/`realB_to_A` needs no extra flags, those arms are now always computed)
 | Data: `artifacts/order_additivity_{arms,comparisons,vectors}_palbociclib_venetoclax_0.5uM*.{csv,npz}`
 
 Hypothesis: two changes at once. (1) The env's reward was hardcoded to per-cell
@@ -243,10 +243,63 @@ one perturbation-fixed/basal-varying, one basal-fixed/perturbation-varying —
 but the same qualitative "real biological substitution gets attenuated to near
 noise" conclusion). The two independently-built harnesses agree.
 
+**Extension: `realA_to_B`/`realB_to_A` arms — real Tahoe-measured drug-treated
+cells as the substituted basal, not STATE's own prediction.** Added two arms
+to `run_arms()` reusing `real_basal_order.py`'s pool-loading helpers
+(`find_cell_line_file`, `load_pools`, `resolve_label` — imported, not
+duplicated, same pattern `basal_control_sweep.py` already uses): draw real
+palbociclib-treated (6012 cells) or venetoclax-treated (7861 cells) SW480
+cells directly as basal, then ONE hop applying the other drug. Scored against
+the *same* reference (`B` applied to real `x0`) and the *same* split-half
+floors as `A_then_B`/`B_then_A`, so it's a direct apples-to-apples comparison
+of "model's guess at the intermediate state" vs. "ground truth":
+
+    arm             in x floor   out x floor    gain    vs.-single rel_resid (x floor)
+    A_then_B (predicted)  1.76        1.04     0.588
+    realA_to_B (real)     1.87        1.06     0.566    0.18x  (realA->B vs B)
+    B_then_A (predicted)  1.64        1.07     0.654
+    realB_to_A (real)     1.90        1.07     0.560    0.17x  (realB->A vs A)
+
+Result: **using real measured cells instead of STATE's own predicted
+intermediate makes no difference.** `realA_to_B`'s output still only moves
+1.06× floor despite a genuinely larger, real input change (1.87×) — same
+sublinear gain (0.566) as the predicted-basal arm (0.588). `realA->B vs B`
+sits at just 0.18× floor: "start from real A-treated cells, then apply B" is
+statistically indistinguishable from "start from real DMSO, apply B" — the
+real drug history contributes nothing measurable. Real-basal order effect
+(`realA->B vs realB->A`, rel_resid 0.93, 0.73× floor) also lands on the same
+verdict as the predicted-basal order effect (0.75× floor): NOT DISTINGUISHABLE
+FROM DRIFT.
+
+This closes a gap the earlier framing left open: one could previously argue
+STATE's predicted intermediate state (a "dense ReLU output, nothing like a
+real cell," per `real_basal_order.py`'s own docstring) might simply be a bad,
+noisy input, and real cells would behave differently if only they were used.
+They don't — real measured cells produce the same attenuated-output behavior,
+so the basal-insensitivity isn't an artifact of feeding the model a synthetic
+intermediate. (This corroborates, inside `order_additivity.py` itself, what
+the 2026-07-25 `real_basal_order.py` entry already found — `realA→B vs ctrl→B`
+cos 0.967/0.33× floor there vs. cos 0.9755/0.18× floor here; same conclusion,
+different exact draws/pool caps/harness.)
+
+Methodological note: the predicted-basal numbers above (`A_then_B`: in=1.76,
+`B_then_A`: in=1.64) differ slightly from the ones printed earlier in this same
+entry (1.90, 1.77) even though both runs use `--seed 0`. Cause: `run_arms()`
+draws the real-basal cells (`env.rng.choice`, for `realA_to_B`/`realB_to_A`)
+*before* it draws the independent second DMSO set (`x0_state_b`) used for the
+split-half floor, so adding the real-basal arms shifts which cells `x0_state_b`
+ends up being. Both draws are equally valid independent samples — the
+qualitative conclusion (gain 0.55–0.65, sublinear) is identical either way —
+but exact floor-normalized numbers are only comparable *within* one run, not
+pasted in from a different invocation. Worth fixing later (e.g. draw
+`x0_state_b` first, unconditionally) if exact cross-run reproducibility ever
+matters more than it does for a qualitative verdict.
+
 Next: E-distance's better dynamic range makes it the more promising reward for
 RL training than UCell (which the 2026-07-15 oracle sweep already showed
 clusters everything near 0.62 — E-distance's clean floor may resolve that);
 try it in an actual training run. Also worth running the gain-metric extension
-on the `Gemcitabine+Paclitaxel` / `Dabrafenib+Trametinib` pairs (the two
-EmeraldBay-representable combos) once that validation track resumes.
+(including the real-basal arms) on the `Gemcitabine+Paclitaxel` /
+`Dabrafenib+Trametinib` pairs (the two EmeraldBay-representable combos) once
+that validation track resumes.
 
