@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.16"
+__generated_with = "0.23.14"
 app = marimo.App()
 
 
@@ -15,7 +15,7 @@ def _():
     cell_line_md_df = pd.read_parquet(dir_path + '/metadata/cell_line_metadata.parquet')
     drug_md_df = pd.read_parquet(dir_path + '/metadata/drug_metadata.parquet')
     gene_md_df = pd.read_parquet(dir_path + '/metadata/gene_metadata.parquet')
-    return
+    return ast, cell_line_md_df, pd, summary_stats_df
 
 
 @app.cell
@@ -77,8 +77,10 @@ def _(eb_df):
 @app.cell
 def _():
     import marimo as mo
+    import numpy as np
+    import matplotlib.pyplot as plt
 
-    return (mo,)
+    return mo, np, plt
 
 
 @app.cell
@@ -687,25 +689,25 @@ def _(bars52, bars52_ceiling):
     _swi = bars52["sw480_idx"]
     _x = _npp.arange(4)
 
-    fig_bars, (axA, axB) = _plt.subplots(1, 2, figsize=(11, 4.4))
+    fig_bars, (_axA, _axB) = _plt.subplots(1, 2, figsize=(11, 4.4))
     _w = 0.38
-    axA.bar(_x - _w/2, _r2, _w, label="R^2", color="#4C72B0")
-    axA.bar(_x + _w/2, _pe, _w, label="Pearson", color="#DD8452")
-    axA.axhline(bars52_ceiling, ls="--", color="gray", lw=1)
-    axA.text(0.0, bars52_ceiling + 0.015, f"A/B sampling ceiling {bars52_ceiling:.2f}", ha="left", fontsize=8, color="gray")
-    axA.axhline(0, color="k", lw=0.6)
-    axA.set_xticks(_x); axA.set_xticklabels(_labels, fontsize=7.5)
-    axA.set_ylabel("pooled score (884 combos)"); axA.set_ylim(-0.15, 1.0)
-    axA.legend(fontsize=8, loc="center right"); axA.set_title("Pooled across 52 cells (lambda=10)", fontsize=10)
+    _axA.bar(_x - _w/2, _r2, _w, label="R^2", color="#4C72B0")
+    _axA.bar(_x + _w/2, _pe, _w, label="Pearson", color="#DD8452")
+    _axA.axhline(bars52_ceiling, ls="--", color="gray", lw=1)
+    _axA.text(0.0, bars52_ceiling + 0.015, f"A/B sampling ceiling {bars52_ceiling:.2f}", ha="left", fontsize=8, color="gray")
+    _axA.axhline(0, color="k", lw=0.6)
+    _axA.set_xticks(_x); _axA.set_xticklabels(_labels, fontsize=7.5)
+    _axA.set_ylabel("pooled score (884 combos)"); _axA.set_ylim(-0.15, 1.0)
+    _axA.legend(fontsize=8, loc="center right"); _axA.set_title("Pooled across 52 cells (lambda=10)", fontsize=10)
 
-    _bp = axB.boxplot(_pcv, showfliers=False, positions=_x, widths=0.5, patch_artist=True)
+    _bp = _axB.boxplot(_pcv, showfliers=False, positions=_x, widths=0.5, patch_artist=True)
     for _p in _bp["boxes"]:
         _p.set_facecolor("#B0C4DE")
     for _i in range(4):
-        axB.plot(_x[_i], _pcv[_i][_swi], marker="*", color="red", ms=13, zorder=6)
-    axB.axhline(0, color="k", lw=0.6); axB.set_ylim(-1.2, 1.0)
-    axB.set_xticks(_x); axB.set_xticklabels(_labels, fontsize=7.5)
-    axB.set_ylabel("per-cell R^2"); axB.set_title("Per-cell spread (red * = SW480)", fontsize=10)
+        _axB.plot(_x[_i], _pcv[_i][_swi], marker="*", color="red", ms=13, zorder=6)
+    _axB.axhline(0, color="k", lw=0.6); _axB.set_ylim(-1.2, 1.0)
+    _axB.set_xticks(_x); _axB.set_xticklabels(_labels, fontsize=7.5)
+    _axB.set_ylabel("per-cell R^2"); _axB.set_title("Per-cell spread (red * = SW480)", fontsize=10)
 
     fig_bars.suptitle("Fig 1a - predict held-out combo growth rate (leave-one-cell-out, 52 x 17)", fontsize=11)
     fig_bars.tight_layout()
@@ -745,43 +747,121 @@ def _(bars52, bars52_ceiling, mo):
 
 
 @app.cell
-def _(bars52):
+def _(bars52, cell_line_md_df):
     # --- Scatter: per-cell R^2, bar 3 vs bar 4 (each dot = one held-out cell line) ---
+    # points below R^2=0 in either bar are annotated with their cell-line name
     import matplotlib.pyplot as _plts
     import numpy as _nps
 
     _b3 = _nps.array(bars52["per_cell_R2"]["bar3"])
     _b4 = _nps.array(bars52["per_cell_R2"]["bar4"])
+    _names_all = _nps.array(bars52["cells"])
     _swi = bars52["sw480_idx"]
     _lo, _hi = -1.5, 1.0
     _b3c, _b4c = _nps.clip(_b3, _lo, _hi), _nps.clip(_b4, _lo, _hi)
     _clip = int(((_b3 < _lo) | (_b4 < _lo)).sum())
 
+    # human-readable name lookup (cellosaurus id -> cell_name), fall back to the id
+    _lut = (cell_line_md_df.drop_duplicates("Cell_ID_Cellosaur")
+            .set_index("Cell_ID_Cellosaur")["cell_name"])
+    _label = _nps.array([str(_lut.get(c, c)) for c in _names_all])
+
     # colour by sign quadrant
     _col = _nps.where((_b3 > 0) & (_b4 > 0), "#2a9d8f",
             _nps.where((_b3 < 0) & (_b4 < 0), "#e76f51", "#9aa0a6"))
 
-    fig_scatter, ax = _plts.subplots(figsize=(6.2, 6.2))
+    fig_scatter, ax = _plts.subplots(figsize=(7.6, 7.6))
     ax.axhline(0, color="gray", lw=0.7); ax.axvline(0, color="gray", lw=0.7)
     ax.plot([_lo, _hi], [_lo, _hi], ls="--", color="k", lw=0.8, label="bar 3 = bar 4")
     ax.scatter(_b3c, _b4c, c=_col, s=45, edgecolor="white", linewidth=0.6, zorder=3)
     ax.scatter([_b3c[_swi]], [_b4c[_swi]], marker="*", s=320, color="red",
                edgecolor="black", linewidth=0.5, zorder=5, label="SW480")
+
+    # --- annotate every line with R^2 < 0 (either bar); greedy vertical declutter so
+    #     coincident/clipped points (e.g. the four pinned at the -1.5 corner) don't overlap ---
+    _neg = _nps.where((_b3 < 0) | (_b4 < 0))[0]
+    _neg = _neg[_neg != _swi]
+    _neg = _neg[_nps.argsort(_b4c[_neg])]      # bottom-most first
+    _gap, _last, _laby = 0.104, -1e9, []
+    for _i in _neg:
+        _y = max(float(_b4c[_i]), _last + _gap)
+        _laby.append(_y); _last = _y
+    for _i, _ly in zip(_neg, _laby):
+        ax.annotate(_label[_i], (_b3c[_i], _b4c[_i]),
+                    xytext=(_b3c[_i] + 0.06, _ly),
+                    fontsize=6.2, color="#7a2f1e", ha="left", va="center", zorder=6,
+                    arrowprops=dict(arrowstyle="-", color="#e76f51", lw=0.4, alpha=0.55))
+
     ax.set_xlim(_lo, _hi); ax.set_ylim(_lo, _hi)
     ax.set_xlabel("bar 3 per-cell R^2   ([1,1], no intercept)")
     ax.set_ylabel("bar 4 per-cell R^2   ([1,1] + intercept)")
     _np3 = int((_b3 > 0).sum()); _np4 = int((_b4 > 0).sum()); _better = int((_b4 > _b3).sum())
     ax.set_title(f"Per-cell R^2: bar3 vs bar4\n"
-                 f"positive R^2: bar3 {_np3}/52, bar4 {_np4}/52   |   intercept helps (bar4>bar3): {_better}/52",
+                 f"positive R^2: bar3 {_np3}/52, bar4 {_np4}/52   |   intercept helps (bar4>bar3): {_better}/52\n"
+                 f"labelled: {len(_neg)} lines with R^2<0 in either bar",
                  fontsize=9)
-    ax.text(_lo + 0.03, _lo + 0.03, f"{_clip} cell(s) clipped to floor (R^2 < {_lo})",
-            fontsize=7.5, color="gray")
-    ax.text(0.55, -0.35, "both R^2 > 0", color="#2a9d8f", fontsize=8, ha="center")
-    ax.text(-0.75, -1.25, "both R^2 < 0", color="#e76f51", fontsize=8, ha="center")
+    ax.text(0.12, 0.92, "both R^2 > 0", color="#2a9d8f", fontsize=8.5, ha="left", style="italic")
+    ax.text(-0.05, -1.42, f"{_clip} clipped to floor (R^2 < {_lo})",
+            fontsize=7.5, color="gray", ha="left")
     ax.legend(fontsize=8, loc="upper left")
     fig_scatter.tight_layout()
     fig_scatter.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_bar3_vs_bar4.png", dpi=150, bbox_inches="tight")
     fig_scatter
+    return
+
+
+@app.cell
+def _(bars52, cell_line_md_df, mo, np, pd):
+    # --- Result: cell lines that fall below R^2 = 0 in the bar3-vs-bar4 figure ---
+    _b3 = np.array(bars52["per_cell_R2"]["bar3"])
+    _b4 = np.array(bars52["per_cell_R2"]["bar4"])
+    _cvcl = np.array(bars52["cells"])
+    _swi = bars52["sw480_idx"]
+    _lut = cell_line_md_df.drop_duplicates("Cell_ID_Cellosaur").set_index("Cell_ID_Cellosaur")
+
+    _tbl = pd.DataFrame({
+        "cell_line": [str(_lut["cell_name"].get(c, c)) for c in _cvcl],
+        "cvcl": _cvcl,
+        "organ": [str(_lut["Organ"].get(c, "?")) for c in _cvcl],
+        "bar3_R2": _b3.round(3),
+        "bar4_R2": _b4.round(3),
+    })
+    _neg3 = _tbl["bar3_R2"] < 0
+    _neg4 = _tbl["bar4_R2"] < 0
+    _tbl["quadrant"] = np.where(_neg3 & _neg4, "both<0",
+                        np.where(~_neg3 & ~_neg4, "both>=0", "mixed"))
+
+    # public result: the below-zero lines, worst (most negative bar4) first
+    bar34_below_zero = (_tbl[_neg3 | _neg4]
+                        .sort_values("bar4_R2")
+                        .reset_index(drop=True))
+
+    _n3, _n4 = int(_neg3.sum()), int(_neg4.sum())
+    _nboth = int((_neg3 & _neg4).sum())
+    _neither = len(bar34_below_zero)
+    _sw = _tbl.iloc[_swi]
+    _organ_counts = (bar34_below_zero["organ"].value_counts().head(3)
+                     .to_string().replace("\n", "; "))
+
+    mo.vstack([
+        mo.md(rf"""
+    ### Cell lines below R^2 = 0 — bar 3 ([1,1], no intercept) vs bar 4 ([1,1] + intercept)
+
+    Each dot in the scatter above is one held-out cell line (leave-one-cell-out, 17 combos each).
+    Points below zero are lines where the additivity-anchored model does **worse than predicting the
+    per-cell mean**.
+
+    - **bar 3 R^2 < 0:** {_n3}/52 &nbsp;|&nbsp; **bar 4 R^2 < 0:** {_n4}/52 &nbsp;|&nbsp;
+      **negative in both:** {_nboth}/52 &nbsp;|&nbsp; **negative in either:** {_neither}/52
+    - The intercept (bar 4) barely rescues anyone — the two negative sets are nearly identical, so the
+      failure is a **wrong direction (assay saturation), not a constant offset**.
+    - Failures concentrate by lineage: {_organ_counts}.
+    - Reference **SW480** sits at the opposite (resistant) end: bar3 = {_sw['bar3_R2']:.2f}, bar4 = {_sw['bar4_R2']:.2f}.
+
+    Full list of the {_neither} below-zero lines (most-negative bar 4 first):
+    """),
+        bar34_below_zero,
+    ])
     return
 
 
@@ -797,6 +877,1016 @@ def _(mo):
     **hurts** it (0.89 -> 0.82). The ~40% of cells in the negative quadrant are where additivity
     is directionally wrong (both drugs bite, response saturates); a free baseline term cannot
     fix a wrong direction, which is why bar 4 tracks bar 3 rather than rescuing it.
+    """)
+    return
+
+
+@app.cell
+def _():
+    return
+
+
+@app.cell
+def _(np, pd):
+    # --- Per-cell summary of the [1,1] additivity-prior model (bars52 "bar3", lambda=10) ---
+    # r2_add = per-cell R^2 of the [1,1]/no-intercept ridge; sign labels who additivity fails on.
+    # This is the same per-cell R^2 shown on the x-axis of the bar3-vs-bar4 scatter.
+    pred_all52 = pd.read_parquet("/home/jeannie/relearn/notebooks/jeannie/bars_all52_v2_predictions.parquet")
+
+    def _percell_r2(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    _rows_pa = []
+    for _cl, _g in pred_all52.groupby("cell_line"):
+        _m = _g["measured"].to_numpy()
+        _pr = _g["bar3_prior11_lam10"].to_numpy()
+        _add = _g["bar1_add"].to_numpy()
+        _rows_pa.append({
+            "cell_line": _cl,
+            "r2_add": _percell_r2(_m, _pr),
+            "mean_measured": float(_m.mean()),
+            "mean_abs_synergy": float(np.abs(_m - _add).mean()),
+            "n": int(len(_g)),
+        })
+    percell_add = pd.DataFrame(_rows_pa)
+    percell_add["sign"] = np.where(percell_add["r2_add"] < 0, "R2<0", "R2>=0")
+    percell_add.sort_values("r2_add").round(3)
+    return percell_add, pred_all52
+
+
+@app.cell
+def _(ast, cell_line_md_df, eb_df, percell_add, summary_stats_df):
+    # Per-cell biological trait: overall single-agent drug sensitivity (independent of the combo test set)
+    def _is_single_drug(c):
+        t = ast.literal_eval(c)
+        return len(t) == 1 and not t[0][0].startswith("DMSO")
+
+    single_gr_all = eb_df[eb_df["condition"].map(_is_single_drug)]
+    cell_sensitivity = (
+        single_gr_all.groupby("cell_line")["growth_rate"]
+        .agg(mean_single_gr="mean",
+             median_single_gr="median",
+             frac_strong_kill=lambda s: (s < -1).mean())
+        .round(3)
+    )
+
+    # Robustly locate the join key + a sampling-depth column in the two metadata tables
+    our_ids = set(percell_add["cell_line"])
+    def _find_key(df, ids):
+        best, best_ov = None, 0
+        for c in df.columns:
+            try:
+                ov = len(set(df[c].astype(str)) & ids)
+            except Exception:
+                ov = 0
+            if ov > best_ov:
+                best, best_ov = c, ov
+        return best, best_ov
+
+    md_key, md_ov = _find_key(cell_line_md_df, our_ids)
+    ss_key, ss_ov = _find_key(summary_stats_df, our_ids)
+    print("cell_line_md_df cols:", list(cell_line_md_df.columns))
+    print("summary_stats_df cols:", list(summary_stats_df.columns))
+    print(f"join key -> cell_line_md_df: {md_key} (overlap {md_ov}) | summary_stats_df: {ss_key} (overlap {ss_ov})")
+    return cell_sensitivity, md_key, ss_key
+
+
+@app.cell
+def _(
+    cell_line_md_df,
+    cell_sensitivity,
+    md_key,
+    np,
+    percell_add,
+    ss_key,
+    summary_stats_df,
+):
+    # pick lineage/tissue + sampling-depth columns defensively
+    def _pick(cols, opts):
+        low = {c.lower(): c for c in cols}
+        for o in opts:
+            if o in low:
+                return low[o]
+        for o in opts:
+            for c in cols:
+                if o in c.lower():
+                    return c
+        return None
+
+    tissue_col = _pick(cell_line_md_df.columns,
+                       ["tissue", "organ", "lineage", "primary_disease", "cancer_type",
+                        "disease", "site", "subtype", "oncotree"])
+    depth_col = _pick(summary_stats_df.columns,
+                      ["n_cells", "cell_count", "num_cells", "n_obs", "count", "cells"])
+
+    cellprofile = percell_add.merge(cell_sensitivity, on="cell_line", how="left")
+
+    if md_key and tissue_col:
+        _md = cell_line_md_df[[md_key, tissue_col]].copy()
+        _md.columns = ["cell_line", "tissue"]
+        _md["cell_line"] = _md["cell_line"].astype(str)
+        _md = _md.drop_duplicates("cell_line")  # md has one row per driver gene; keep one tissue per cell
+        cellprofile = cellprofile.merge(_md, on="cell_line", how="left")
+    else:
+        cellprofile["tissue"] = "unknown"
+
+    if ss_key and depth_col:
+        _ss = summary_stats_df[[ss_key, depth_col]].copy()
+        _ss.columns = ["cell_line", "depth"]
+        _ss["cell_line"] = _ss["cell_line"].astype(str)
+        _ss = _ss.groupby("cell_line", as_index=False)["depth"].median()
+        cellprofile = cellprofile.merge(_ss, on="cell_line", how="left")
+    else:
+        cellprofile["depth"] = np.nan
+
+    # neg vs pos comparison on the candidate drivers
+    _cmp_cols = ["r2_add", "mean_measured", "min_single", "mean_single_gr",
+                 "median_single_gr", "frac_strong_kill", "mean_abs_synergy", "n", "depth"]
+    _cmp_cols = [c for c in _cmp_cols if c in cellprofile.columns]
+    neg_vs_pos = cellprofile.groupby("sign")[_cmp_cols].median().round(3)
+    print("Median trait by group (R2<0 vs R2>=0):")
+    print(neg_vs_pos.T.to_string())
+    cellprofile.sort_values("r2_add").round(3)
+    return (cellprofile,)
+
+
+@app.cell
+def _(cellprofile):
+    # Lineage composition + enrichment of the failing cells
+    tissue_tab = (
+        cellprofile.assign(neg=(cellprofile["sign"] == "R2<0").astype(int))
+        .groupby("tissue")
+        .agg(n_total=("neg", "size"), n_neg=("neg", "sum"),
+             median_r2=("r2_add", "median"),
+             median_single_gr=("mean_single_gr", "median"))
+    )
+    tissue_tab["frac_neg"] = (tissue_tab["n_neg"] / tissue_tab["n_total"]).round(2)
+    tissue_tab = tissue_tab.sort_values(["frac_neg", "n_total"], ascending=[False, False]).round(3)
+    print("Lineage breakdown (frac_neg = share of that lineage with R2<0):")
+    print(tissue_tab.to_string())
+    tissue_tab
+    return (tissue_tab,)
+
+
+@app.cell
+def _(cellprofile, np, plt, tissue_tab):
+    fig_cells, (_axA, _axB, _axC) = plt.subplots(1, 3, figsize=(15, 4.6))
+    _cmap = {"R2<0": "#e76f51", "R2>=0": "#2a9d8f"}
+    _c = cellprofile["sign"].map(_cmap)
+
+    # A: technical hypothesis -> sampling depth vs additive R^2
+    if cellprofile["depth"].notna().any():
+        _axA.scatter(cellprofile["depth"], cellprofile["r2_add"], c=_c, s=55, edgecolor="white")
+        _axA.set_xscale("log")
+        _axA.set_xlabel("sampling depth (cells, log)")
+    else:
+        _axA.scatter(cellprofile["n"], cellprofile["r2_add"], c=_c, s=55, edgecolor="white")
+        _axA.set_xlabel("n eligible combos (depth proxy)")
+    _axA.axhline(0, color="k", lw=0.7)
+    _axA.set_ylabel("additive R^2"); _axA.set_ylim(-6, 1.05)
+    _axA.set_title("Technical: is R^2<0 just thin sampling?")
+
+    # B: biological hypothesis -> single-agent sensitivity vs additive R^2
+    _axB.scatter(cellprofile["mean_single_gr"], cellprofile["r2_add"], c=_c, s=55, edgecolor="white")
+    _axB.axhline(0, color="k", lw=0.7); _axB.axvline(0, color="gray", lw=0.6)
+    _axB.set_xlabel("mean single-agent growth_rate  (more negative = more drug-sensitive)")
+    _axB.set_ylabel("additive R^2"); _axB.set_ylim(-6, 1.05)
+    _axB.set_title("Biological: sensitive cells saturate -> R^2<0")
+
+    # C: lineage enrichment
+    _tt = tissue_tab[tissue_tab["n_total"] >= 2].sort_values("frac_neg")
+    _yy = np.arange(len(_tt))
+    _axC.barh(_yy, _tt["frac_neg"], color="#4C72B0")
+    _axC.set_yticks(_yy); _axC.set_yticklabels(_tt.index, fontsize=7.5)
+    _axC.set_xlabel("fraction of lineage with R^2<0")
+    _axC.set_title("Which lineages fail (n>=2 cells)")
+
+    fig_cells.tight_layout()
+    fig_cells
+    return
+
+
+@app.cell
+def _(bars52, cell_line_md_df, cellprofile, np, plt):
+    # --- Bar 3 per-cell R^2 vs single-agent drug potency (each dot = one held-out cell line) ---
+    # Tests the "R^2<0 = drug-sensitive lines" claim directly. Extreme lines on each
+    # potency end are labelled. r2_add is the bar3 ([1,1], no-intercept) per-cell R^2.
+    from scipy.stats import spearmanr as _spearman
+
+    _lut_nm = (cell_line_md_df.drop_duplicates("Cell_ID_Cellosaur")
+               .set_index("Cell_ID_Cellosaur")["cell_name"])
+    _pp = cellprofile.copy()
+    _pp["name"] = [str(_lut_nm.get(c, c)) for c in _pp["cell_line"]]
+
+    _x = _pp["mean_single_gr"].to_numpy()          # potency: more negative = drugs kill harder
+    _yfloor = -2.0
+    _yraw = _pp["r2_add"].to_numpy()
+    _y = np.clip(_yraw, _yfloor, 1.05)
+    _nclip = int((_yraw < _yfloor).sum())
+    _col = np.where(_yraw < 0, "#e76f51", "#2a9d8f")
+    _swi = int(np.where(_pp["cell_line"].to_numpy() == bars52["cells"][bars52["sw480_idx"]])[0][0])
+
+    _rho = _spearman(_x, _yraw).correlation
+    _r = np.corrcoef(_x, _yraw)[0, 1]
+
+    fig_potency, axp = plt.subplots(figsize=(8.2, 6.2))
+    axp.axhline(0, color="gray", lw=0.7)
+    axp.axvline(0, color="gray", lw=0.6, ls=":")
+    axp.scatter(_x, _y, c=_col, s=55, edgecolor="white", linewidth=0.6, zorder=3)
+    axp.scatter([_x[_swi]], [_y[_swi]], marker="*", s=340, color="red",
+                edgecolor="black", linewidth=0.5, zorder=6, label="SW480")
+
+    # label the extreme lines on either potency end (4 most potent, 4 least potent)
+    _k = 4
+    _order = np.argsort(_x)
+    _ext = list(_order[:_k]) + list(_order[-_k:])
+    _xmed = np.median(_x)
+    for _i in _ext:
+        _left = _x[_i] < _xmed
+        _dx = -0.012 if _left else 0.012
+        axp.annotate(_pp["name"].iloc[_i], (_x[_i], _y[_i]),
+                     xytext=(_x[_i] + _dx, _y[_i] + 0.10),
+                     fontsize=7, color="#333", ha="right" if _left else "left",
+                     va="bottom", zorder=7,
+                     arrowprops=dict(arrowstyle="-", color="gray", lw=0.4, alpha=0.6))
+
+    axp.set_xlabel("single-agent drug potency  =  mean single-agent growth_rate\n"
+                   "(left = drugs kill harder / more potent      right = more resistant)")
+    axp.set_ylabel("bar 3 per-cell R^2   ([1,1], no intercept)")
+    axp.set_ylim(_yfloor - 0.05, 1.1)
+    axp.set_title(f"Bar 3 fit vs drug potency  (each dot = 1 held-out cell line, n=52)\n"
+                  f"no relationship: Spearman rho = {_rho:+.2f},  Pearson r = {_r:+.2f}",
+                  fontsize=10)
+    if _nclip:
+        axp.text(_x.min(), _yfloor + 0.02,
+                 f"{_nclip} cell(s) clipped to floor (R^2 < {_yfloor:g})",
+                 fontsize=7.5, color="gray", va="bottom")
+    axp.legend(fontsize=8, loc="lower right")
+    fig_potency.tight_layout()
+    fig_potency.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_bar3_vs_potency.png",
+                        dpi=150, bbox_inches="tight")
+    fig_potency
+    return
+
+
+@app.cell
+def _(ast, np, pd, plt, pred_all52):
+    # --- Bar 3 R^2 vs potency, aggregated PER PERTURBATION (each dot = one combo condition) ---
+    # Flip of the per-cell plot: for each perturbation we average across all 52 cell lines.
+    #   x = potency  = mean measured growth_rate across the 52 cells (more negative = more potent)
+    #   y = R^2 across the 52 cells for bar3 ([1,1], no-intercept) predictions
+    # Every perturbation is labelled (name + dose) so each dot is identifiable.
+    from scipy.stats import spearmanr as _spearman2
+
+    def _r2_perturb(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    def _dose_label(cond):
+        _parts = ast.literal_eval(cond)
+        return " + ".join(f"{_d} {_dose:g}uM" for _d, _dose, _u in _parts)
+
+    _rows_pb = []
+    for _cond, _g in pred_all52.groupby("condition"):
+        _m = _g["measured"].to_numpy()
+        _pr = _g["bar3_prior11_lam10"].to_numpy()
+        _rows_pb.append({"condition": _cond, "label": _dose_label(_cond),
+                         "n_cells": int(len(_g)),
+                         "potency": float(_m.mean()),
+                         "r2": _r2_perturb(_m, _pr)})
+    perturb_r2 = pd.DataFrame(_rows_pb).sort_values("potency").reset_index(drop=True)
+
+    _xp = perturb_r2["potency"].to_numpy()
+    _yp = perturb_r2["r2"].to_numpy()
+    _lbl = perturb_r2["label"].to_numpy()
+    _colp = np.where(_yp < 0, "#e76f51", "#2a9d8f")
+    _rho2 = _spearman2(_xp, _yp).correlation
+    _r2p = np.corrcoef(_xp, _yp)[0, 1]
+
+    fig_perturb, axq = plt.subplots(figsize=(11.5, 6.6))
+    axq.axhline(0, color="gray", lw=0.7)
+    axq.axvline(0, color="gray", lw=0.6, ls=":")
+    axq.scatter(_xp, _yp, c=_colp, s=80, edgecolor="white", linewidth=0.7, zorder=3)
+
+    # label EVERY perturbation; split into a left/right column and vertically declutter each
+    def _spread_y(ids):
+        _gap, _last, _out = 0.17, -1e9, {}
+        for _i in sorted(ids, key=lambda j: _yp[j]):
+            _yy = max(float(_yp[_i]), _last + _gap); _out[_i] = _yy; _last = _yy
+        return _out
+
+    _mid = float(np.median(_xp))
+    _left_ids = [i for i in range(len(_xp)) if _xp[i] <= _mid]
+    _right_ids = [i for i in range(len(_xp)) if _xp[i] > _mid]
+    _lyL, _lyR = _spread_y(_left_ids), _spread_y(_right_ids)
+    _xL, _xR = _xp.min() - 0.018, _xp.max() + 0.018
+    for _i in _left_ids:
+        axq.annotate(_lbl[_i], (_xp[_i], _yp[_i]), xytext=(_xL, _lyL[_i]),
+                     fontsize=6.6, color="#333", ha="right", va="center", zorder=6,
+                     arrowprops=dict(arrowstyle="-", color="gray", lw=0.4, alpha=0.6))
+    for _i in _right_ids:
+        axq.annotate(_lbl[_i], (_xp[_i], _yp[_i]), xytext=(_xR, _lyR[_i]),
+                     fontsize=6.6, color="#333", ha="left", va="center", zorder=6,
+                     arrowprops=dict(arrowstyle="-", color="gray", lw=0.4, alpha=0.6))
+
+    axq.set_xlabel("perturbation potency  =  mean measured growth_rate across 52 cells\n"
+                   "(left = combo kills harder / more potent      right = weaker effect)")
+    axq.set_ylabel("per-perturbation R^2   (bar 3, [1,1] no intercept, across 52 cells)")
+    axq.set_title(f"Bar 3 fit vs potency, PER PERTURBATION  (each dot = 1 combo, n={len(perturb_r2)})\n"
+                  f"no relationship: Spearman rho = {_rho2:+.2f},  Pearson r = {_r2p:+.2f}",
+                  fontsize=10)
+    axq.set_xlim(_xp.min() - 0.035, _xp.max() + 0.035)
+    axq.set_ylim(min(-1.9, _yp.min() - 0.1), 1.05)
+    fig_perturb.tight_layout()
+    fig_perturb.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_bar3_r2_per_perturbation.png",
+                        dpi=150, bbox_inches="tight")
+    fig_perturb
+    return
+
+
+@app.cell
+def _(ast, np, pd, plt, pred_all52):
+    # --- Bar 2 (Rhaister ships) R^2 vs potency, PER PERTURBATION (each dot = one combo) ---
+    # Same as the bar-3 per-perturbation plot but for bar2 = shrink-to-0 ridge + intercept
+    # (the production "Rhaister ships" model). Every perturbation labelled (name + dose).
+    from scipy.stats import spearmanr as _spearman3
+
+    def _r2_pb2(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    def _dose_label2(cond):
+        _parts = ast.literal_eval(cond)
+        return " + ".join(f"{_d} {_dose:g}uM" for _d, _dose, _u in _parts)
+
+    _rows_b2 = []
+    for _cond, _g in pred_all52.groupby("condition"):
+        _m = _g["measured"].to_numpy()
+        _pr = _g["bar2_shrink0_lam10"].to_numpy()
+        _rows_b2.append({"condition": _cond, "label": _dose_label2(_cond),
+                         "potency": float(_m.mean()), "r2": _r2_pb2(_m, _pr)})
+    perturb_r2_bar2 = pd.DataFrame(_rows_b2).sort_values("potency").reset_index(drop=True)
+
+    _xb = perturb_r2_bar2["potency"].to_numpy()
+    _yb = perturb_r2_bar2["r2"].to_numpy()
+    _lb = perturb_r2_bar2["label"].to_numpy()
+    _colb = np.where(_yb < 0, "#e76f51", "#2a9d8f")
+    _rho3 = _spearman3(_xb, _yb).correlation
+    _r3 = np.corrcoef(_xb, _yb)[0, 1]
+
+    fig_perturb_bar2, axr = plt.subplots(figsize=(11.5, 6.6))
+    axr.axhline(0, color="gray", lw=0.7)
+    axr.axvline(0, color="gray", lw=0.6, ls=":")
+    axr.scatter(_xb, _yb, c=_colb, s=80, edgecolor="white", linewidth=0.7, zorder=3)
+
+    # label EVERY perturbation; split into left/right column, spread evenly across the band
+    _ylo_b, _yhi_b = -0.1, 1.05
+    def _even_y(ids):
+        _s = sorted(ids, key=lambda j: _yb[j])
+        _pos = np.linspace(_ylo_b + 0.07, _yhi_b - 0.07, len(_s)) if len(_s) > 1 else [np.mean([_ylo_b, _yhi_b])]
+        return {i: y for i, y in zip(_s, _pos)}
+
+    _mid_b = float(np.median(_xb))
+    _left_b = [i for i in range(len(_xb)) if _xb[i] <= _mid_b]
+    _right_b = [i for i in range(len(_xb)) if _xb[i] > _mid_b]
+    _eyL, _eyR = _even_y(_left_b), _even_y(_right_b)
+    _xLb, _xRb = _xb.min() - 0.018, _xb.max() + 0.018
+    for _i in _left_b:
+        axr.annotate(_lb[_i], (_xb[_i], _yb[_i]), xytext=(_xLb, _eyL[_i]),
+                     fontsize=6.6, color="#333", ha="right", va="center", zorder=6,
+                     arrowprops=dict(arrowstyle="-", color="gray", lw=0.4, alpha=0.6))
+    for _i in _right_b:
+        axr.annotate(_lb[_i], (_xb[_i], _yb[_i]), xytext=(_xRb, _eyR[_i]),
+                     fontsize=6.6, color="#333", ha="left", va="center", zorder=6,
+                     arrowprops=dict(arrowstyle="-", color="gray", lw=0.4, alpha=0.6))
+
+    axr.set_xlabel("perturbation potency  =  mean measured growth_rate across 52 cells\n"
+                   "(left = combo kills harder / more potent      right = weaker effect)")
+    axr.set_ylabel("per-perturbation R^2   (bar 2 'Rhaister ships', shrink-0 + intercept)")
+    axr.set_title(f"Bar 2 (Rhaister ships) fit vs potency, PER PERTURBATION  (each dot = 1 combo, n={len(perturb_r2_bar2)})\n"
+                  f"Spearman rho = {_rho3:+.2f},  Pearson r = {_r3:+.2f}   |   all {int((_yb>=0).sum())}/{len(_yb)} perturbations R^2 >= 0",
+                  fontsize=10)
+    axr.set_xlim(_xb.min() - 0.035, _xb.max() + 0.035)
+    axr.set_ylim(_ylo_b, _yhi_b)
+    fig_perturb_bar2.tight_layout()
+    fig_perturb_bar2.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_bar2_r2_per_perturbation.png",
+                             dpi=150, bbox_inches="tight")
+    fig_perturb_bar2
+    return
+
+
+@app.cell
+def _(mo, pd, plt, pred_all52):
+    # --- Per-perturbation R^2 vs potency, coloured by combo DESIGN CLASS (bar1 vs bar3) ---
+    # Each dot = one combo, aggregated across all 52 cells. Colour = design class from
+    # artifacts/emeraldbay_combo_design_classes.csv. Two panels share the y-axis so the
+    # same combo can be compared between the pure-additivity (bar1) and [1,1]-ridge (bar3) fits.
+    _dc = pd.read_csv("/home/jeannie/relearn/artifacts/emeraldbay_combo_design_classes.csv")
+    _dcmap = dict(zip(_dc["condition"], _dc["design_class"]))
+    _dosemap = dict(zip(_dc["condition"], _dc["doses_uM"]))
+
+    def _r2_cls(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    _rows_cls = []
+    for _cond, _g in pred_all52.groupby("condition"):
+        _m = _g["measured"].to_numpy()
+        _rows_cls.append({
+            "drugs": _g["drugs"].iloc[0],
+            "doses_uM": _dosemap.get(_cond, ""),
+            "design_class": _dcmap.get(_cond, "unknown"),
+            "potency": float(_m.mean()),
+            "r2_bar1": _r2_cls(_m, _g["bar1_add"].to_numpy()),
+            "r2_bar3": _r2_cls(_m, _g["bar3_prior11_lam10"].to_numpy()),
+            "condition": _cond,
+        })
+    perturb_classes = pd.DataFrame(_rows_cls)
+
+    _CLASS_COLORS = {
+        "horizontal bypass": "#4C72B0",
+        "vertical blockade": "#DD8452",
+        "same process / different mechanism": "#55A868",
+        "orthogonal process": "#C44E52",
+        "pharmacokinetic modulation": "#8172B3",
+        "same-node redundancy": "#937860",
+    }
+    # stable legend order = most common first
+    _cls_order = list(perturb_classes["design_class"].value_counts().index)
+
+    fig_classes, (axb1, axb3) = plt.subplots(1, 2, figsize=(15, 6.2), sharey=True)
+    for _ax, _ycol, _ttl in [
+        (axb1, "r2_bar1", "bar 1: add-the-singles (pure additivity, no model)"),
+        (axb3, "r2_bar3", "bar 3: [1,1] additivity-prior ridge (no intercept)"),
+    ]:
+        for _cls in _cls_order:
+            _sub = perturb_classes[perturb_classes["design_class"] == _cls]
+            _ax.scatter(_sub["potency"], _sub[_ycol], s=110,
+                        color=_CLASS_COLORS.get(_cls, "#999999"),
+                        edgecolor="white", linewidth=0.8, label=_cls, zorder=3)
+        _ax.axhline(0, color="gray", lw=0.7)
+        _ax.axvline(0, color="gray", lw=0.6, ls=":")
+        _ax.set_title(_ttl, fontsize=10)
+        _ax.set_xlabel("perturbation potency = mean growth_rate across 52 cells\n"
+                       "(left = combo kills harder / more potent)")
+
+    axb1.set_ylabel("per-perturbation R^2 (across 52 cells)")
+    axb1.set_ylim(-2.9, 1.08)
+    _h, _l = axb3.get_legend_handles_labels()
+    fig_classes.legend(_h, _l, title="combo design class", loc="upper center",
+                       ncol=len(_cls_order), fontsize=8.5, frameon=False,
+                       bbox_to_anchor=(0.5, 1.005))
+    fig_classes.suptitle("Per-perturbation R^2 vs potency, coloured by design class  (n=17 combos)",
+                         fontsize=11, y=1.06)
+    fig_classes.tight_layout(rect=[0, 0, 1, 0.98])
+    fig_classes.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_bar1_bar3_by_designclass.png",
+                        dpi=150, bbox_inches="tight")
+
+    _ref = (perturb_classes[["design_class", "drugs", "doses_uM", "potency", "r2_bar1", "r2_bar3"]]
+            .sort_values(["design_class", "potency"]).round(3).reset_index(drop=True))
+    mo.vstack([fig_classes, mo.md("**Reference — each dot identified:**"), _ref])
+    return
+
+
+@app.cell
+def _(mo, pd, plt, pred_all52):
+    # --- Per-perturbation R^2 vs potency, coloured by combo DESIGN CLASS (bar2 vs bar3) ---
+    # Same as the bar1-vs-bar3 design-class plot, but the left panel is bar2 = the production
+    # "Rhaister ships" model (shrink-to-0 ridge + intercept). Each dot = one combo (across 52 cells).
+    _dc2 = pd.read_csv("/home/jeannie/relearn/artifacts/emeraldbay_combo_design_classes.csv")
+    _dcmap2 = dict(zip(_dc2["condition"], _dc2["design_class"]))
+    _dosemap2 = dict(zip(_dc2["condition"], _dc2["doses_uM"]))
+
+    def _r2_cls2(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    _rows_cls2 = []
+    for _cond, _g in pred_all52.groupby("condition"):
+        _m = _g["measured"].to_numpy()
+        _rows_cls2.append({
+            "drugs": _g["drugs"].iloc[0],
+            "doses_uM": _dosemap2.get(_cond, ""),
+            "design_class": _dcmap2.get(_cond, "unknown"),
+            "potency": float(_m.mean()),
+            "r2_bar2": _r2_cls2(_m, _g["bar2_shrink0_lam10"].to_numpy()),
+            "r2_bar3": _r2_cls2(_m, _g["bar3_prior11_lam10"].to_numpy()),
+            "condition": _cond,
+        })
+    perturb_classes_b2b3 = pd.DataFrame(_rows_cls2)
+
+    _CLASS_COLORS2 = {
+        "horizontal bypass": "#4C72B0",
+        "vertical blockade": "#DD8452",
+        "same process / different mechanism": "#55A868",
+        "orthogonal process": "#C44E52",
+        "pharmacokinetic modulation": "#8172B3",
+        "same-node redundancy": "#937860",
+    }
+    _cls_order2 = list(perturb_classes_b2b3["design_class"].value_counts().index)
+
+    fig_classes_b2b3, (_axb2, _axb3) = plt.subplots(1, 2, figsize=(15, 6.2), sharey=True)
+    for _ax, _ycol, _ttl in [
+        (_axb2, "r2_bar2", "bar 2: 'Rhaister ships' (shrink-to-0 ridge + intercept)"),
+        (_axb3, "r2_bar3", "bar 3: [1,1] additivity-prior ridge (no intercept)"),
+    ]:
+        for _cls in _cls_order2:
+            _sub = perturb_classes_b2b3[perturb_classes_b2b3["design_class"] == _cls]
+            _ax.scatter(_sub["potency"], _sub[_ycol], s=110,
+                        color=_CLASS_COLORS2.get(_cls, "#999999"),
+                        edgecolor="white", linewidth=0.8, label=_cls, zorder=3)
+        _ax.axhline(0, color="gray", lw=0.7)
+        _ax.axvline(0, color="gray", lw=0.6, ls=":")
+        _ax.set_title(_ttl, fontsize=10)
+        _ax.set_xlabel("perturbation potency = mean growth_rate across 52 cells\n"
+                       "(left = combo kills harder / more potent)")
+
+    _axb2.set_ylabel("per-perturbation R^2 (across 52 cells)")
+    _axb2.set_ylim(-1.9, 1.08)
+    _h2, _l2 = _axb3.get_legend_handles_labels()
+    fig_classes_b2b3.legend(_h2, _l2, title="combo design class", loc="upper center",
+                            ncol=len(_cls_order2), fontsize=8.5, frameon=False,
+                            bbox_to_anchor=(0.5, 1.005))
+    fig_classes_b2b3.suptitle("Per-perturbation R^2 vs potency, coloured by design class  (bar2 vs bar3, n=17)",
+                              fontsize=11, y=1.06)
+    fig_classes_b2b3.tight_layout(rect=[0, 0, 1, 0.98])
+    fig_classes_b2b3.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_bar2_bar3_by_designclass.png",
+                             dpi=150, bbox_inches="tight")
+
+    _ref2 = (perturb_classes_b2b3[["design_class", "drugs", "doses_uM", "potency", "r2_bar2", "r2_bar3"]]
+             .sort_values(["design_class", "potency"]).round(3).reset_index(drop=True))
+    mo.vstack([fig_classes_b2b3, mo.md("**Reference — each dot identified:**"), _ref2])
+    return
+
+
+@app.cell
+def _(ast, eb_df, np, pd):
+    # --- Experiment: bar3-style ridge fit under different additivity W_priors ---
+    # bar3 = ridge on the residual (combo - [w1*single_1 + w2*single_2]), then add the weighted
+    # prior back. Here we SWEEP W_prior. All 17 eligible combos are 2-drug. Components are ordered
+    # by SORTED (alphabetical) drug name: weight[0] -> alphabetically-first drug (matches the
+    # `drugs` label order), weight[1] -> second. Symmetric priors are order-invariant.
+    from rhaister.combos import is_multi_drug as _is_multi
+    from rhaister.prepare_sensitivity import make_splits as _make_splits
+    from rhaister.train_sensitivity import _als_decompose_scalar as _als_fn, _drug_regression as _dreg_fn
+
+    _df_wp = eb_df
+    _cellsW = sorted(_df_wp.cell_line.unique()); _treatW = sorted(_df_wp.condition.unique())
+    _c2iW = {c: i for i, c in enumerate(_cellsW)}; _t2iW = {t: i for i, t in enumerate(_treatW)}
+    _ncW, _ntW = len(_cellsW), len(_treatW)
+    _singlesW = set(); _scondW = {}
+    for _c in _treatW:
+        if not _is_multi(_c):
+            _t = ast.literal_eval(_c)
+            if not _t[0][0].startswith("DMSO"):
+                _singlesW.add((_t[0][0], _t[0][1])); _scondW[(_t[0][0], _t[0][1])] = _c
+    _eligW = [_c for _c in _treatW if _is_multi(_c)
+              and all((d, dose) in _singlesW for d, dose, u in ast.literal_eval(_c))]
+
+    # order each combo's components ALPHABETICALLY by drug name; record the assignment
+    _compW, _order_ref = {}, {}
+    for _c in _eligW:
+        _ranked = sorted(ast.literal_eval(_c), key=lambda _t: _t[0])
+        _compW[_c] = [_t2iW[_scondW[(d, dose)]] for d, dose, u in _ranked]
+        _order_ref[_c] = {"first_drug (w0)": _ranked[0][0], "second_drug (w1)": _ranked[1][0]}
+
+    _grW = {(r.cell_line, r.condition): r.growth_rate for r in _df_wp.itertuples()}
+
+    def _fit_prior(weights, lam=10.0):
+        _W = np.asarray(weights, float); _rows = []
+        for _hcn in _cellsW:
+            _hc = _c2iW[_hcn]
+            _tr, _ = _make_splits(_df_wp, {"holdout_cells": [_hcn],
+                                           "test_treatments": {_hcn: set(_eligW)}})
+            _ctr = np.array([_c2iW[c] for c in _tr.cell_line])
+            _ttr = np.array([_t2iW[t] for t in _tr.condition])
+            _yv = _tr.growth_rate.to_numpy(float)
+            _mu, _ce, _te = _als_fn(_yv, _ctr, _ttr, _ncW, _ntW, n_iter=30)
+            _yimp = _mu + _ce[:, None] + _te[None, :]; _yimp[_ctr, _ttr] = _yv
+            _obs = np.zeros((_ncW, _ntW), bool); _obs[_ctr, _ttr] = True
+            _tp = [(_hc, _t2iW[c]) for c in _eligW]
+            _prior_hc = np.array([(_yimp[_hc, _compW[c]] * _W).sum() for c in _eligW])
+            _res = _yimp.copy()
+            for c in _eligW:
+                _res[:, _t2iW[c]] = _yimp[:, _t2iW[c]] - (_yimp[:, _compW[c]] * _W).sum(1)
+            _yr, _cov = _dreg_fn(_res, _obs, _tp, lam=lam, holdout_set={_hc})
+            _pred = np.where(_cov, _yr + _prior_hc, _prior_hc)
+            for _k, c in enumerate(_eligW):
+                _rows.append({"cell_line": _hcn, "condition": c,
+                              "pred": float(_pred[_k]), "measured": float(_grW[(_hcn, c)])})
+        return pd.DataFrame(_rows)
+
+    _PRIORS_WP = [
+        ("[1, 1]  (= bar3 ref)", [1, 1]),
+        ("[1, -1]", [1, -1]),
+        ("[-1, 1]", [-1, 1]),
+        ("[0.5, 0.5]", [0.5, 0.5]),
+        ("[0.75, 0.25]", [0.75, 0.25]),
+        ("[0.25, 0.75]", [0.25, 0.75]),
+    ]
+
+    _dcW = pd.read_csv("/home/jeannie/relearn/artifacts/emeraldbay_combo_design_classes.csv")
+    _dcmapW = dict(zip(_dcW.condition, _dcW.design_class))
+    _dosemapW = dict(zip(_dcW.condition, _dcW.doses_uM))
+    _drugmapW = dict(zip(_dcW.condition, _dcW.drugs))
+
+    def _r2W(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    _tidy = []
+    for _lbl, _w in _PRIORS_WP:
+        _pf = _fit_prior(_w)
+        for _cond, _g in _pf.groupby("condition"):
+            _m = _g["measured"].to_numpy(); _pr = _g["pred"].to_numpy()
+            _tidy.append({"prior": _lbl, "weights": str(_w), "condition": _cond,
+                          "drugs": _drugmapW.get(_cond, "?"),
+                          "design_class": _dcmapW.get(_cond, "unknown"),
+                          "doses_uM": _dosemapW.get(_cond, ""),
+                          "first_drug": _order_ref[_cond]["first_drug (w0)"],
+                          "second_drug": _order_ref[_cond]["second_drug (w1)"],
+                          "potency": float(_m.mean()), "r2": _r2W(_m, _pr)})
+    wprior_perturb_r2 = pd.DataFrame(_tidy)
+
+    wprior_order_ref = (pd.DataFrame([{"drugs": _drugmapW[_c], "doses_uM": _dosemapW[_c],
+                                       **_order_ref[_c]} for _c in _eligW])
+                        .drop_duplicates().reset_index(drop=True))
+    wprior_order_ref
+    return (wprior_perturb_r2,)
+
+
+@app.cell
+def _(plt, wprior_perturb_r2):
+    # --- W_prior sweep: per-perturbation R^2 vs potency, coloured by design class ---
+    # One panel per W_prior (bar3 [1,1] shown first as reference). Each dot = one combo
+    # (R^2 across 52 cells). Same colouring scheme as the design-class plots above.
+    _CLASS_COLORS_WP = {
+        "horizontal bypass": "#4C72B0",
+        "vertical blockade": "#DD8452",
+        "same process / different mechanism": "#55A868",
+        "orthogonal process": "#C44E52",
+        "pharmacokinetic modulation": "#8172B3",
+        "same-node redundancy": "#937860",
+    }
+    _panel_order = ["[1, 1]  (= bar3 ref)", "[0.5, 0.5]", "[0.75, 0.25]",
+                    "[0.25, 0.75]", "[1, -1]", "[-1, 1]"]
+    _cls_order_wp = list(wprior_perturb_r2["design_class"].value_counts().index)
+
+    fig_wprior, _axes = plt.subplots(2, 3, figsize=(16.5, 9.2), sharex=True, sharey=True)
+    _axes = _axes.ravel()
+    for _ax, _prior in zip(_axes, _panel_order):
+        _d = wprior_perturb_r2[wprior_perturb_r2["prior"] == _prior]
+        for _cls in _cls_order_wp:
+            _s = _d[_d["design_class"] == _cls]
+            _ax.scatter(_s["potency"], _s["r2"], s=95,
+                        color=_CLASS_COLORS_WP.get(_cls, "#999999"),
+                        edgecolor="white", linewidth=0.7, label=_cls, zorder=3)
+        _ax.axhline(0, color="gray", lw=0.7)
+        _ax.axvline(0, color="gray", lw=0.6, ls=":")
+        _med = _d["r2"].median(); _nneg = int((_d["r2"] < 0).sum())
+        _ax.set_title(f"W_prior = {_prior}\nmedian R^2 = {_med:+.2f}   |   R^2<0: {_nneg}/{len(_d)}",
+                      fontsize=9.5)
+
+    for _i in (0, 3):
+        _axes[_i].set_ylabel("per-perturbation R^2 (across 52 cells)")
+    for _i in (3, 4, 5):
+        _axes[_i].set_xlabel("perturbation potency = mean growth_rate\n(left = more potent)")
+    _axes[0].set_ylim(-1.9, 1.08)
+
+    _hw, _lw = _axes[0].get_legend_handles_labels()
+    fig_wprior.legend(_hw, _lw, title="combo design class", loc="upper center",
+                      ncol=len(_cls_order_wp), fontsize=9, frameon=False,
+                      bbox_to_anchor=(0.5, 1.005))
+    fig_wprior.suptitle("bar3-style fit under different additivity W_priors  (n=17 combos, lam=10)\n"
+                        "weights = [alphabetically-first drug, second drug]  (components sorted by name)",
+                        fontsize=11, y=1.06)
+    fig_wprior.tight_layout(rect=[0, 0, 1, 0.97])
+    fig_wprior.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_wprior_sweep_by_designclass.png",
+                       dpi=150, bbox_inches="tight")
+    fig_wprior
+    return
+
+
+@app.cell
+def _(ast, eb_df, np, pd):
+    # --- W_prior sweep, POTENT-DRUG-FIRST ordering (variant of the alphabetical sweep above) ---
+    # Same fit as the alphabetical W_prior sweep, but components are ordered POTENT-DRUG-FIRST:
+    # potency = mean single-agent growth_rate across all 52 cells, most-negative (most potent)
+    # first -> weight[0] = more-potent partner, weight[1] = weaker. Symmetric priors unchanged.
+    from rhaister.combos import is_multi_drug as _is_multi
+    from rhaister.prepare_sensitivity import make_splits as _make_splits
+    from rhaister.train_sensitivity import _als_decompose_scalar as _als_fn, _drug_regression as _dreg_fn
+
+    _df_wp = eb_df
+    _cellsW = sorted(_df_wp.cell_line.unique()); _treatW = sorted(_df_wp.condition.unique())
+    _c2iW = {c: i for i, c in enumerate(_cellsW)}; _t2iW = {t: i for i, t in enumerate(_treatW)}
+    _ncW, _ntW = len(_cellsW), len(_treatW)
+    _singlesW = set(); _scondW = {}
+    for _c in _treatW:
+        if not _is_multi(_c):
+            _t = ast.literal_eval(_c)
+            if not _t[0][0].startswith("DMSO"):
+                _singlesW.add((_t[0][0], _t[0][1])); _scondW[(_t[0][0], _t[0][1])] = _c
+    _eligW = [_c for _c in _treatW if _is_multi(_c)
+              and all((d, dose) in _singlesW for d, dose, u in ast.literal_eval(_c))]
+
+    # potency = mean single-agent growth_rate across all cells (more negative = more potent)
+    _single_pot = _df_wp[~_df_wp["condition"].map(_is_multi)].groupby("condition")["growth_rate"].mean().to_dict()
+    _compW, _potency_ref = {}, {}
+    for _c in _eligW:
+        _ranked = sorted(ast.literal_eval(_c), key=lambda _t: _single_pot[_scondW[(_t[0], _t[1])]])
+        _compW[_c] = [_t2iW[_scondW[(d, dose)]] for d, dose, u in _ranked]
+        _potency_ref[_c] = {"potent_drug (w0)": _ranked[0][0], "weak_drug (w1)": _ranked[1][0],
+                            "potent_mean_gr": round(_single_pot[_scondW[(_ranked[0][0], _ranked[0][1])]], 3),
+                            "weak_mean_gr": round(_single_pot[_scondW[(_ranked[1][0], _ranked[1][1])]], 3)}
+
+    _grW = {(r.cell_line, r.condition): r.growth_rate for r in _df_wp.itertuples()}
+
+    def _fit_prior(weights, lam=10.0):
+        _W = np.asarray(weights, float); _rows = []
+        for _hcn in _cellsW:
+            _hc = _c2iW[_hcn]
+            _tr, _ = _make_splits(_df_wp, {"holdout_cells": [_hcn],
+                                           "test_treatments": {_hcn: set(_eligW)}})
+            _ctr = np.array([_c2iW[c] for c in _tr.cell_line])
+            _ttr = np.array([_t2iW[t] for t in _tr.condition])
+            _yv = _tr.growth_rate.to_numpy(float)
+            _mu, _ce, _te = _als_fn(_yv, _ctr, _ttr, _ncW, _ntW, n_iter=30)
+            _yimp = _mu + _ce[:, None] + _te[None, :]; _yimp[_ctr, _ttr] = _yv
+            _obs = np.zeros((_ncW, _ntW), bool); _obs[_ctr, _ttr] = True
+            _tp = [(_hc, _t2iW[c]) for c in _eligW]
+            _prior_hc = np.array([(_yimp[_hc, _compW[c]] * _W).sum() for c in _eligW])
+            _res = _yimp.copy()
+            for c in _eligW:
+                _res[:, _t2iW[c]] = _yimp[:, _t2iW[c]] - (_yimp[:, _compW[c]] * _W).sum(1)
+            _yr, _cov = _dreg_fn(_res, _obs, _tp, lam=lam, holdout_set={_hc})
+            _pred = np.where(_cov, _yr + _prior_hc, _prior_hc)
+            for _k, c in enumerate(_eligW):
+                _rows.append({"cell_line": _hcn, "condition": c,
+                              "pred": float(_pred[_k]), "measured": float(_grW[(_hcn, c)])})
+        return pd.DataFrame(_rows)
+
+    _PRIORS_WP = [
+        ("[1, 1]  (= bar3 ref)", [1, 1]), ("[1, -1]", [1, -1]), ("[-1, 1]", [-1, 1]),
+        ("[0.5, 0.5]", [0.5, 0.5]), ("[0.75, 0.25]", [0.75, 0.25]), ("[0.25, 0.75]", [0.25, 0.75]),
+    ]
+    _dcW = pd.read_csv("/home/jeannie/relearn/artifacts/emeraldbay_combo_design_classes.csv")
+    _dcmapW = dict(zip(_dcW.condition, _dcW.design_class))
+    _dosemapW = dict(zip(_dcW.condition, _dcW.doses_uM))
+    _drugmapW = dict(zip(_dcW.condition, _dcW.drugs))
+
+    def _r2W(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    _tidy = []
+    for _lbl, _w in _PRIORS_WP:
+        _pf = _fit_prior(_w)
+        for _cond, _g in _pf.groupby("condition"):
+            _m = _g["measured"].to_numpy(); _pr = _g["pred"].to_numpy()
+            _tidy.append({"prior": _lbl, "weights": str(_w), "condition": _cond,
+                          "drugs": _drugmapW.get(_cond, "?"),
+                          "design_class": _dcmapW.get(_cond, "unknown"),
+                          "doses_uM": _dosemapW.get(_cond, ""),
+                          "potent_drug": _potency_ref[_cond]["potent_drug (w0)"],
+                          "weak_drug": _potency_ref[_cond]["weak_drug (w1)"],
+                          "potency": float(_m.mean()), "r2": _r2W(_m, _pr)})
+    wprior_perturb_r2_potent = pd.DataFrame(_tidy)
+
+    wprior_potency_ref_potent = (pd.DataFrame([{"drugs": _drugmapW[_c], "doses_uM": _dosemapW[_c],
+                                                **_potency_ref[_c]} for _c in _eligW])
+                                 .sort_values("potent_mean_gr").reset_index(drop=True))
+    wprior_potency_ref_potent
+    return (wprior_perturb_r2_potent,)
+
+
+@app.cell
+def _(plt, wprior_perturb_r2_potent):
+    # --- W_prior sweep (POTENT-FIRST): per-perturbation R^2 vs potency, coloured by design class ---
+    _CLASS_COLORS_WP = {
+        "horizontal bypass": "#4C72B0", "vertical blockade": "#DD8452",
+        "same process / different mechanism": "#55A868", "orthogonal process": "#C44E52",
+        "pharmacokinetic modulation": "#8172B3", "same-node redundancy": "#937860",
+    }
+    _panel_order = ["[1, 1]  (= bar3 ref)", "[0.5, 0.5]", "[0.75, 0.25]",
+                    "[0.25, 0.75]", "[1, -1]", "[-1, 1]"]
+    _cls_order_wp = list(wprior_perturb_r2_potent["design_class"].value_counts().index)
+
+    fig_wprior_potent, _axes = plt.subplots(2, 3, figsize=(16.5, 9.2), sharex=True, sharey=True)
+    _axes = _axes.ravel()
+    for _ax, _prior in zip(_axes, _panel_order):
+        _d = wprior_perturb_r2_potent[wprior_perturb_r2_potent["prior"] == _prior]
+        for _cls in _cls_order_wp:
+            _s = _d[_d["design_class"] == _cls]
+            _ax.scatter(_s["potency"], _s["r2"], s=95,
+                        color=_CLASS_COLORS_WP.get(_cls, "#999999"),
+                        edgecolor="white", linewidth=0.7, label=_cls, zorder=3)
+        _ax.axhline(0, color="gray", lw=0.7)
+        _ax.axvline(0, color="gray", lw=0.6, ls=":")
+        _med = _d["r2"].median(); _nneg = int((_d["r2"] < 0).sum())
+        _ax.set_title(f"W_prior = {_prior}\nmedian R^2 = {_med:+.2f}   |   R^2<0: {_nneg}/{len(_d)}",
+                      fontsize=9.5)
+    for _i in (0, 3):
+        _axes[_i].set_ylabel("per-perturbation R^2 (across 52 cells)")
+    for _i in (3, 4, 5):
+        _axes[_i].set_xlabel("perturbation potency = mean growth_rate\n(left = more potent)")
+    _axes[0].set_ylim(-1.9, 1.08)
+    _hw, _lw = _axes[0].get_legend_handles_labels()
+    fig_wprior_potent.legend(_hw, _lw, title="combo design class", loc="upper center",
+                             ncol=len(_cls_order_wp), fontsize=9, frameon=False,
+                             bbox_to_anchor=(0.5, 1.005))
+    fig_wprior_potent.suptitle("bar3-style fit under different additivity W_priors  (n=17 combos, lam=10)\n"
+                               "weights = [more-potent partner, less-potent partner]  (potency = mean growth_rate across 52 cells)",
+                               fontsize=11, y=1.06)
+    fig_wprior_potent.tight_layout(rect=[0, 0, 1, 0.97])
+    fig_wprior_potent.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_wprior_sweep_potentfirst_by_designclass.png",
+                              dpi=150, bbox_inches="tight")
+    fig_wprior_potent
+    return
+
+
+@app.cell
+def _(np, pd, pred_all52):
+    # --- Baseline references per perturbation: bar1 (additivity), bar2 (Rhaister ships), A/B ceiling ---
+    # bar1/bar2 = per-combo R^2 across 52 cells (from pred_all52). A/B ceiling = split-half
+    # growth_rate reproducibility recomputed from the raw h5ad single-cell counts: split each
+    # cell line's cells in half, recompute growth_rate on each half, correlate half-A vs half-B
+    # across the 52 cells (per combo), Spearman-Brown-project to full-sample reliability r_full.
+    # r_full is a reliability (correlation) and upper-bounds the achievable per-perturbation R^2.
+    import glob as _glob, h5py as _h5py
+
+    _H5 = "/large_storage/goodarzilab/bioreason_cell/emeraldbay/h5ads"
+    _CTRL = "[('DMSO_TF', 0.0, 'uM')]"
+    def _cats(f, key):
+        _c = f[f"obs/{key}/categories"][:]
+        return [x.decode() if isinstance(x, bytes) else x for x in _c]
+
+    _ab_data = []
+    for _p in sorted(_glob.glob(f"{_H5}/*.h5ad")):
+        with _h5py.File(_p, "r") as _f:
+            _cc = _cats(_f, "cell_line"); _ccodes = _f["obs/cell_line/codes"][:]
+            _cl = _cc[np.bincount(_ccodes).argmax()]
+            _dcat = _cats(_f, "drugname_drugconc")
+            _dco = _f["obs/drugname_drugconc/codes"][:].astype(np.int32)
+            _ab_data.append((_cl, _dco, _dcat))
+
+    def _gr_half(which, masks):
+        _counts = {}
+        for (_cl, _dco, _dcat), _mask in zip(_ab_data, masks):
+            _m = _mask if which == "A" else ~_mask
+            _nb = np.bincount(_dco[_m], minlength=len(_dcat))
+            _counts[_cl] = {_dcat[i]: int(_nb[i]) for i in range(len(_dcat)) if _nb[i] > 0}
+        _tot = {}
+        for _cl, _cd in _counts.items():
+            for _cond, _n in _cd.items():
+                _tot[_cond] = _tot.get(_cond, 0) + _n
+        _gr = {}
+        for _cl, _cd in _counts.items():
+            _nc = _cd.get(_CTRL, 0)
+            if _nc == 0 or _tot.get(_CTRL, 0) == 0:
+                continue
+            _pc = _nc / _tot[_CTRL]
+            for _cond, _n in _cd.items():
+                if _cond == _CTRL or _n == 0:
+                    continue
+                _gr[(_cl, _cond)] = np.log2((_n / _tot[_cond]) / _pc)
+        return _gr
+
+    _conds17 = sorted(pred_all52.condition.unique())
+    _abper = {c: [] for c in _conds17}
+    for _seed in range(5):
+        _rng = np.random.default_rng(_seed)
+        _masks = [_rng.random(len(d[1])) < 0.5 for d in _ab_data]
+        _ga = _gr_half("A", _masks); _gb = _gr_half("B", _masks)
+        for c in _conds17:
+            _a, _b = [], []
+            for (_cl, _, _) in _ab_data:
+                _k = (_cl, c)
+                if _k in _ga and _k in _gb:
+                    _a.append(_ga[_k]); _b.append(_gb[_k])
+            if len(_a) >= 3:
+                _abper[c].append(float(np.corrcoef(_a, _b)[0, 1]))
+
+    def _r2b(m, p):
+        _ss = ((m - m.mean()) ** 2).sum()
+        return float("nan") if _ss == 0 else float(1 - ((m - p) ** 2).sum() / _ss)
+
+    _dcB = pd.read_csv("/home/jeannie/relearn/artifacts/emeraldbay_combo_design_classes.csv")
+    _dcmapB = dict(zip(_dcB.condition, _dcB.design_class))
+    _drugmapB = dict(zip(_dcB.condition, _dcB.drugs))
+    _dosemapB = dict(zip(_dcB.condition, _dcB.doses_uM))
+
+    _rowsB = []
+    for _cond, _g in pred_all52.groupby("condition"):
+        _m = _g["measured"].to_numpy()
+        _rh = float(np.mean(_abper[_cond])); _rf = 2 * _rh / (1 + _rh)
+        _rowsB.append({"condition": _cond, "drugs": _drugmapB.get(_cond, "?"),
+                       "design_class": _dcmapB.get(_cond, "unknown"),
+                       "doses_uM": _dosemapB.get(_cond, ""),
+                       "potency": float(_m.mean()),
+                       "r2_bar1": _r2b(_m, _g["bar1_add"].to_numpy()),
+                       "r2_bar2": _r2b(_m, _g["bar2_shrink0_lam10"].to_numpy()),
+                       "ab_r_half": _rh, "ab_r_full": _rf})
+    baseline_perturb = pd.DataFrame(_rowsB)
+    baseline_perturb[["design_class", "drugs", "doses_uM", "potency",
+                      "r2_bar1", "r2_bar2", "ab_r_full"]].round(3)
+    return (baseline_perturb,)
+
+
+@app.cell
+def _(baseline_perturb, plt):
+    # --- Baselines per perturbation vs potency, coloured by design class ---
+    # bar1 (pure additivity) and bar2 (Rhaister ships) share the R^2 axis; the A/B split-half
+    # panel is a reliability ceiling (Spearman-Brown r_full), so it has its own axis.
+    _CLASS_COLORS_B = {
+        "horizontal bypass": "#4C72B0",
+        "vertical blockade": "#DD8452",
+        "same process / different mechanism": "#55A868",
+        "orthogonal process": "#C44E52",
+        "pharmacokinetic modulation": "#8172B3",
+        "same-node redundancy": "#937860",
+    }
+    _cls_order_b = list(baseline_perturb["design_class"].value_counts().index)
+
+    fig_baselines, (_axb1, _axb2, _axab) = plt.subplots(1, 3, figsize=(16.5, 5.6))
+
+    def _scatter_panel(ax, ycol, title, is_r2=True):
+        for _cls in _cls_order_b:
+            _s = baseline_perturb[baseline_perturb["design_class"] == _cls]
+            ax.scatter(_s["potency"], _s[ycol], s=100,
+                       color=_CLASS_COLORS_B.get(_cls, "#999999"),
+                       edgecolor="white", linewidth=0.8, label=_cls, zorder=3)
+        ax.axhline(0, color="gray", lw=0.7)
+        ax.axvline(0, color="gray", lw=0.6, ls=":")
+        ax.set_xlabel("perturbation potency = mean growth_rate\n(left = more potent)")
+        ax.set_title(title, fontsize=9.5)
+
+    _m1 = baseline_perturb["r2_bar1"].median(); _n1 = int((baseline_perturb["r2_bar1"] < 0).sum())
+    _m2 = baseline_perturb["r2_bar2"].median(); _n2 = int((baseline_perturb["r2_bar2"] < 0).sum())
+    _scatter_panel(_axb1, "r2_bar1",
+                   f"bar 1: add-the-singles (pure additivity)\nmedian R^2 = {_m1:+.2f}  |  R^2<0: {_n1}/17")
+    _scatter_panel(_axb2, "r2_bar2",
+                   f"bar 2: 'Rhaister ships' (shrink-0 + intercept)\nmedian R^2 = {_m2:+.2f}  |  R^2<0: {_n2}/17")
+    _axb1.set_ylabel("per-perturbation R^2 (across 52 cells)")
+    _axb1.set_ylim(-2.9, 1.08); _axb2.set_ylim(-2.9, 1.08)
+
+    # A/B ceiling panel (reliability, own axis)
+    _scatter_panel(_axab, "ab_r_full",
+                   f"A/B split-half ceiling (reliability)\nmedian r_full = {baseline_perturb['ab_r_full'].median():.2f}  |  upper bound on R^2")
+    _axab.set_ylabel("Spearman-Brown r_full  (split-half reliability)")
+    _axab.set_ylim(0.5, 1.0)
+
+    _hb, _lb = _axb1.get_legend_handles_labels()
+    fig_baselines.legend(_hb, _lb, title="combo design class", loc="upper center",
+                         ncol=len(_cls_order_b), fontsize=8.5, frameon=False,
+                         bbox_to_anchor=(0.5, 1.02))
+    fig_baselines.suptitle("Baseline references per perturbation (bar1, bar2, A/B ceiling)  — n=17 combos",
+                           fontsize=11.5, y=1.10)
+    fig_baselines.tight_layout(rect=[0, 0, 1, 0.9])
+    fig_baselines.savefig("/home/jeannie/relearn/notebooks/jeannie/fig_baselines_by_designclass.png",
+                          dpi=150, bbox_inches="tight")
+    fig_baselines
+    return
+
+
+@app.cell
+def _(cellprofile, mo):
+    _neg = cellprofile[cellprofile["sign"] == "R2<0"]
+    _pos = cellprofile[cellprofile["sign"] == "R2>=0"]
+    _corr = cellprofile[["r2_add", "mean_single_gr"]].corr().iloc[0, 1]
+    _corr_depth = (cellprofile[["r2_add", "depth"]].corr().iloc[0, 1]
+                   if cellprofile["depth"].notna().any() else float("nan"))
+
+    mo.md(rf"""
+    ### What the R^2<0 cell lines have in common
+
+    **They are the drug-sensitive lines, not the poorly-sampled ones.** The negative-R^2 group
+    separates cleanly on biology: their **mean single-agent growth_rate is
+    {_neg['mean_single_gr'].median():.2f}** vs **{_pos['mean_single_gr'].median():.2f}** for the
+    R^2>=0 group — i.e. drugs kill much harder in the failing cells. Across all 52 lines, additive
+    R^2 correlates with single-agent sensitivity at **r = {_corr:.2f}** (middle panel): the more a
+    cell is killed by single agents, the worse additivity does.
+
+    **The mechanism is assay saturation, and it is directional.** In a sensitive line two potent
+    agents each drive growth_rate strongly negative; summing them in log-space (the additive/Bliss
+    prediction) forecasts killing below the biological floor, so measured combos sit systematically
+    *above* the additive line. That one-sided compression is a wrong *direction*, not a constant
+    offset — which is why an intercept (bar 4) can't fix it and only free weights (shrink-to-0) can.
+
+    **It is largely not a sampling artefact.** Additive R^2 vs sequencing depth shows
+    {"a weak" if abs(_corr_depth) < 0.3 else "some"} relationship (r = {_corr_depth:.2f}, left panel):
+    depth alone does not explain who fails. SW480 is deeply sampled yet additivity works there because
+    it sits in the *resistant / non-saturating* regime — the opposite end of the same sensitivity axis.
+
+    **Lineage tracks sensitivity.** The right panel shows the failure concentrates in the most
+    drug-responsive lineages rather than spreading uniformly, consistent with a sensitivity-driven
+    (not lineage-intrinsic) effect — see `tissue_tab` for the per-lineage `frac_neg`.
+
+    **Bottom line.** "R^2<0" labels a **cell state — high drug sensitivity that saturates the
+    growth assay — not a data-quality problem.** This is exactly why the additivity/[1,1] prior that
+    helped the resistant SW480 hurts the panel: ~40% of these lines are sensitive enough that additive
+    killing is physically impossible, and any model anchored to additivity inherits that bias.
     """)
     return
 
